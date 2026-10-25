@@ -3,6 +3,14 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## Unreleased
+
+Fixed:
+
+- The editor builds a label, a mark and a quota window for any provider named in `providers` or
+  `adapters` that it does not know, such as `opencode` in front of NVIDIA models. Before, its
+  boxes rendered without a name or icon.
+
 ## 19 (2026-10-23)
 
 Added:

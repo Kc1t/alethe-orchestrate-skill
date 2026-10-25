@@ -517,6 +517,17 @@ const PROVIDERS = {
   },
 }
 const ROUTES = { router9: { label: '9router', dialects: ['anthropic', 'openai'] } }
+// A provider that is not listed above (for example opencode in front of NVIDIA models) still needs a label,
+// a mark and a quota window, or its boxes would render without a name or icon. Build it from `providers` and `adapters`.
+const customMark = (label) => `data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='#6b7280'/><text x='32' y='42' font-family='Arial,sans-serif' font-size='28' font-weight='700' text-anchor='middle' fill='#fff'>${label.slice(0, 1).toUpperCase()}</text></svg>`)}`
+;[...(Array.isArray(DATA.providers) ? DATA.providers : []), ...Object.keys(DATA.adapters ?? {})].forEach((id) => {
+  if (typeof id !== 'string' || PROVIDERS[id]) return
+  PROVIDERS[id] = {
+    label: id, cli: DATA.adapters?.[id]?.command ?? id, adapter: 'custom', readOnly: false, effort: false, reader: false, soft: 'rgba(107, 114, 128, 0.15)', models: [],
+    windows: [{ key: 'month', token: 'credits', label: 'credits', main: true, long: true, cycle: 'credit cycle' }],
+  }
+  MARKS[id] = MARKS[id] ?? customMark(id)
+})
 const AGENTS = Object.fromEntries(Object.entries(PROVIDERS).map(([id, p]) => [id, p.label]))
 const modelIdOf = (m) => (m && typeof m === 'object' ? m.id : m)
 const modelsOf = (id) => [...new Set([...(PROVIDERS[id]?.models ?? []), ...(DATA.models?.[id] ?? []).map(modelIdOf)])]
