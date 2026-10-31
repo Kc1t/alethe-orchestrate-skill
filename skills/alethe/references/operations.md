@@ -115,7 +115,7 @@ flag the runner creates a unique directory under the operating system's temporar
 
 ## Staying on
 
-`mode on [--goal save|balanced|max] [--care careful] [--rule TEXT]... [--cwd DIR]` keeps
+`mode on [--goal save|balanced|max|freestyle] [--care careful] [--rule TEXT]... [--cwd DIR]` keeps
 orchestration on for the repository that holds `--cwd` (or that folder outside git), saved in
 `modes.json` next to the orchestrations. Calling it again changes only the flags given; rules add
 up to 8, and `--clear-rules` drops them. `mode show` prints the mode, and `mode off` removes it. A
@@ -128,7 +128,9 @@ project mode always wins over the default. `mode show` says which one applies, a
 
 `hook` reads an agent hook's JSON from stdin and prints a one-paragraph reminder of the goal, care
 level and rules when the hook's `cwd` is inside a project with a mode on, and nothing otherwise.
-It never fails. The Claude Code plugin runs it on every prompt (`hooks/hooks.json`).
+It never fails. The Claude Code plugin runs it on every prompt (`hooks/hooks.json`). Under goal
+`freestyle` the reminder asks for no orchestration at all: the lead works as usual, watches quota,
+and offers one-line suggestions for cheaper routes.
 
 ## Changing course
 

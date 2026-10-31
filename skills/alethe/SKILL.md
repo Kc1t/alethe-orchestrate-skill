@@ -1,9 +1,9 @@
 ---
 name: alethe
 description: Orchestrate bounded Codex, Claude Code, Agy, Kimi, or custom CLI workers to finish work with the least lead context and provider usage, following playbooks such as plan big, execute small. Use when the user asks to orchestrate, delegate, compare agents, conserve agent tokens or quota, recover a worker, report what an orchestration did and cost, or work without MCP or Python, when the user types /alethe or a short command such as "alethe report" or "alethe stop", and when they want it on from now on, at any point of a task and alongside other skills. Also use it proactively, without being asked, when a request is large enough to split into bounded independent units, such as a multi-file refactor, a migration, an audit or research across many files. Do not use for a small mechanical task unless explicitly requested.
-argument-hint: "[task or standing instruction] | on | off | save | max | careful | report | status | usage | models | editor | list | stop | skip <phase> | switch <playbook> | freeform | budget <limit> | mark <worker> <used|partial|discarded> | setup | help"
+argument-hint: "[task or standing instruction] | on | off | save | max | freestyle | careful | report | status | usage | models | editor | list | stop | skip <phase> | switch <playbook> | freeform | budget <limit> | mark <worker> <used|partial|discarded> | setup | help"
 metadata:
-  version: "19"
+  version: "20"
 ---
 
 # Orchestrate CLI workers
@@ -13,7 +13,7 @@ mix when the user asks. Plan, delegate bounded units, and integrate results supp
 
 - **Playbook** = the phases and roles.
 - **Profile** = which models each tier uses (`base`, `savings`, `aggressive`).
-- **Goal** = how eagerly to delegate while a mode is on (`save`, `balanced`, `max`).
+- **Goal** = how eagerly to delegate while a mode is on (`save`, `balanced`, `max`, `freestyle`).
 - **Runner strategy** = how one wave runs (`economy`, `balanced`, `quality`, `research`, `parallel`, `rescue`).
 
 ## Choose the backend
@@ -73,7 +73,7 @@ action. Run-specific commands without a folder use the current orchestration: th
 | `always`, or "always on", "in every project" | `mode on --everywhere` |
 | `off` | `mode off`; with the default on, this turns it off in this project only |
 | `off everywhere` | `mode off --everywhere` |
-| `save`, `balanced`, `max` | `mode on --goal <it>` |
+| `save`, `balanced`, `max`, `freestyle` | `mode on --goal <it>` |
 | `careful` | `mode on --care careful` |
 | `report [folder]` | `report`, and show its output as is, without a summary of your own |
 | `report html`, or "show the report" | `report --format html`, which writes `report.html` in the folder and opens it; without Python, fill `assets/report.html` as in [references/manual.md](references/manual.md) |
@@ -103,6 +103,13 @@ Both modes take the same options:
 
 - `--goal save` spends as little as possible, `max` gets the most out of the available agents, and
   `balanced` (the default) delegates only when the playbook says it pays.
+- `--goal freestyle` drops playbooks, plans and waves: you work as usual and only watch over cost.
+  Check quota before long or heavy steps. When a cheaper or better route exists, say so in one
+  line, at most once per reply and not again once declined: "This rename is mechanical, so I'll
+  hand it to a Sonnet worker to keep it cheap." Take a cheaper route that keeps the quality the
+  step needs and say so in that line; ask before anything that costs more, starts several workers
+  or passes the quota stop line. Your own model is the user's to change: suggest `/model <name>`.
+  It is not `freeform`, which drops the playbook of a running orchestration.
 - `--care careful` reads before writing, isolates every writer, reviews every diff before
   integrating it, and asks before anything hard to undo.
 - `--rule "<the user's words>"` keeps a standing instruction, up to 8; `--clear-rules` drops them.

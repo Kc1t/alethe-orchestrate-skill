@@ -3,7 +3,14 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
-## Unreleased
+## 20 (2026-10-31)
+
+Added:
+
+- Goal `freestyle` (`/alethe freestyle`, or `mode on --goal freestyle`): no playbook, plan or
+  waves. The lead works as usual, checks quota before heavy steps, and says in one line when a
+  cheaper or better route exists, such as handing a mechanical step to a Sonnet worker. It takes
+  cheaper routes that keep the quality and says so, and asks before anything that costs more.
 
 Fixed:
 

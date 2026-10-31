@@ -1,6 +1,6 @@
 {
   "name": "alethe-orchestrate",
-  "version": "19.0.0",
+  "version": "20.0.0",
   "description": "Plan with your agent and hand bounded work to Codex, Claude Code, Antigravity, Kimi or any CLI agent, following playbooks that save context and quota, then report what each run did and cost.",
   "author": {
     "name": "Kauã Miguel",

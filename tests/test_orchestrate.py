@@ -599,6 +599,19 @@ class GuardTest(Fixtures):
         self.assertEqual(self.hook(other), "")
         self.assertIn("on for this project", self.hook(repo))
 
+    def test_freestyle_reminds_the_lead_to_watch_cost_instead_of_orchestrating(self):
+        repo = self.make_repo()
+        self.assertEqual(self.call("mode", "on", "--cwd", repo, "--goal", "freestyle", "--rule", "economiza")[0], 0)
+        reminder = self.hook(repo)
+        self.assertIn("Goal: freestyle", reminder)
+        self.assertIn("with no playbook, plan or waves", reminder)
+        self.assertIn("say so in one line, at most once per reply", reminder)
+        self.assertIn("ask before anything that costs more", reminder)
+        self.assertIn("User rules: economiza.", reminder)
+        self.assertNotIn("delegate bounded units when it pays", reminder)
+        self.call("mode", "on", "--cwd", repo, "--goal", "save")
+        self.assertNotIn("with no playbook, plan or waves", self.hook(repo))
+
     def test_the_plugin_hook_and_command_point_at_the_runner(self):
         hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
         command = hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]

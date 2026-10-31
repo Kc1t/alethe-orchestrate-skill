@@ -50,7 +50,16 @@ MODE_GOALS = {
     "save": "spend as little as possible: keep small work with the lead and send bounded units to the cheapest capable tier",
     "balanced": "delegate only when the playbook says it pays, on the tier each unit needs",
     "max": "get the most out of the available agents: parallel waves, strong reviewers and best-of-n on hard calls",
+    "freestyle": "watch over cost and quota and suggest cheaper routes, without orchestrating",
 }
+MODE_FREESTYLE = (
+    "Work as usual, with no playbook, plan or waves. Check quota before long or heavy steps. When a "
+    "cheaper or better route exists, say so in one line, at most once per reply and not again after the user "
+    "declines it: name the model or worker, why, and what it saves, such as 'This rename is mechanical, so I'll "
+    "hand it to a Sonnet worker to keep it cheap.' Take a cheaper route that keeps the quality the step needs "
+    "and tell the user in that line; ask before anything that costs more, starts several workers, or passes "
+    "the quota stop line. Your own model is the user's to change, so suggest '/model <name>' for it."
+)
 MODE_CAREFUL = (
     "read before writing, give every writer its own worktree, review every diff before integrating it, "
     "and ask before anything hard to undo"
@@ -3966,6 +3975,9 @@ def mode_reminder(mode: Dict[str, Any], everywhere: bool) -> str:
     rules = [rule for rule in mode.get("rules") or [] if isinstance(rule, str)]
     if rules:
         parts.append("User rules: " + "; ".join(rules) + ".")
+    if goal == "freestyle":
+        parts.append(MODE_FREESTYLE + " '/alethe off' turns this off here.")
+        return " ".join(parts)
     parts.append(
         "Follow the alethe skill for each request: do it yourself when that is cheaper, "
         "delegate bounded units when it pays, and leave any other skill or spec workflow in charge of "

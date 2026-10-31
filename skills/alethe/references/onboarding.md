@@ -69,8 +69,9 @@ save or start workers before the user approves.
    records onboarding as complete. A choice limited to one run stays out of the policy.
 3. Ask once: "Keep orchestration on in every project, so you never have to call it?" On yes,
    run `mode on --everywhere`. Suggest goal `save` for profile `savings`, goal `max` for profile
-   `aggressive`, or goal `balanced` for profile `base`; the goal controls delegation, independently
-   of the profile's tier models. It can be turned off per project later.
+   `aggressive`, or goal `balanced` for profile `base`, and goal `freestyle` when they only want it
+   to watch cost and suggest; the goal controls delegation, independently of the profile's tier
+   models. It can be turned off per project later.
 4. Offer a preview diagram of the active profile.
 
 Later, "use savings" or "go aggressive" changes `profile` in the copy; confirm it when it is an

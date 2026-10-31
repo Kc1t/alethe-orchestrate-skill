@@ -187,5 +187,5 @@ needs only what you know; use `null` for anything its CLI did not report:
 | `stop` | stop the background worker processes of the current folder |
 | `budget <limit>` | write the limit at the top of `state.md` and check it after every wave |
 | `note <text>`, `mark <worker> <mark>` | append it to `state.md`; the report lists notes under "Changes to the plan" |
-| `on`, `off`, `save`, `balanced`, `max`, `careful` | keep the mode, goal, care level and rules in this conversation; after a compaction, ask the user whether it is still on |
+| `on`, `off`, `save`, `balanced`, `max`, `freestyle`, `careful` | keep the mode, goal, care level and rules in this conversation; after a compaction, ask the user whether it is still on |
 | `setup` | section 1, then [onboarding.md](onboarding.md) |

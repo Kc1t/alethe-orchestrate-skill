@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "alethe-orchestrate",
-      "version": "19.0.0",
+      "version": "20.0.0",
       "description": "Orchestrate CLI agents with playbooks that save context and quota, and report what each run did and cost.",
       "source": {
         "source": "local",
