@@ -3,6 +3,19 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## 21 (2026-10-31)
+
+Added:
+
+- Playbook condition `price-above:<usd>`: holds when the model the unit would run on lists an
+  input price above `<usd>` per 1M tokens in the price table `models` shows. A model with no known
+  price cannot establish it. A rule such as `if: price-above:5` → `use: { tier: cheap }` steers a
+  phase off expensive models.
+- Playbook condition `spent-above:<usd>`: holds when the orchestration's reported spend, as
+  `status` and `report` total it, is above `<usd>`. Only cost the CLIs reported counts.
+- The editor has a `spent` selector in the scenario bar, kept in the link, and simulates
+  `price-above` from a `model-prices` block that `editor` fills from the price table.
+
 ## 20 (2026-10-31)
 
 Added:

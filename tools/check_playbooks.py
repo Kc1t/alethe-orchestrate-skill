@@ -33,6 +33,7 @@ def condition_pattern(providers):
     return re.compile(
         r"^(not )?(narrow|risky|light|standard|deep|kind:(research|code|review|command|scrap|docs)|"
         rf"({ids})-(low|spare)|both-low|all-low|budget-low|({ids})(-[a-z0-9]+)?-above:\d{{1,3}}|"
+        r"(price|spent)-above:\d+(\.\d{1,2})?|"
         r"checks-failed|checks-failed-twice|report-weak|conflict|stuck|no-pass|findings-left)$"
     )
 

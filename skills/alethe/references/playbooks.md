@@ -113,7 +113,9 @@ For each worker:
 
 1. Start from the phase's tier and provider, with the active profile's tiers and order.
 2. Apply the first rule whose `if` holds. Skip a rule whose model belongs to a different provider
-   unless it also names that provider.
+   unless it also names that provider. A rule can steer a phase off expensive models with
+   `price-above` and cap a run's later waves with `spent-above`, for example
+   `if: price-above:5` → `use: { tier: cheap }`.
 3. Before every wave run `usage`. If the chosen provider is low, move to the next capable provider
    in the active order at the same tier, resolving that provider's model and effort. Respect a
    provider the user pinned; a playbook's suggested provider does not prevent adapting the plan.
@@ -192,6 +194,8 @@ negate it. `<provider>` is any provider id and `<window>` one of its windows abo
 | `<provider>-<window>-above:<n>` | That window in a fresh reading is past n percent, for example `claude-opus-above:50` or `codex-week-above:80` |
 | `<provider>-spare` | That provider has spare quota |
 | `budget-low` | More than `budget.warnAt` percent of the plan budget is spent |
+| `price-above:<usd>` | The model the unit would run on, from the phase's tier, provider and model before this rule, lists an input price above `<usd>` US dollars per 1M tokens in the price table, for example `price-above:5` or `price-above:2.5`. A model with no known price, including the CLI's default when none is pinned, cannot establish it |
+| `spent-above:<usd>` | This orchestration's reported spend so far, as `status` and `report` total it, is above `<usd>` US dollars. Only cost the CLIs reported counts; nothing is estimated |
 | `checks-failed`, `checks-failed-twice` | The phase's checks failed once, or twice |
 | `report-weak` | A report lacks the evidence it was asked for |
 | `conflict` | Reports contradict each other |
@@ -205,4 +209,7 @@ the user; for other providers, ask the user. A stale or absent reading cannot es
 `above` or `spare` condition. `conserveProviders` and explicit user warnings still establish low.
 Spare quota also needs a reset time; a non-renewing plan end comes from `quota.planEnds` or the
 user. Ignore a `planEnds` date that has passed. Task, check and report conditions are judged by
-the lead from evidence; budget conditions use the plan's recorded spend.
+the lead from evidence; budget conditions, `spent-above` among them, use the plan's recorded spend.
+`price-above` reads the price table `models` shows: the bundled `prices.json` overlaid by
+`alethe-prices.json` next to the policy, keyed `provider/model`. It is a planning choice the lead
+makes before the wave.

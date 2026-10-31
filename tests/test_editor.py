@@ -44,12 +44,14 @@ class EditorTest(unittest.TestCase):
     def blocks(self, page):
         yaml = re.search(r'<script type="text/yaml" id="playbooks-yaml">\n(.*?)\n</script>', page, re.S).group(1)
         usage = re.search(r'<script type="application/json" id="live-usage">(.*?)</script>', page).group(1)
-        return yaml, json.loads(usage)
+        prices = re.search(r'<script type="application/json" id="model-prices">(.*?)</script>', page).group(1)
+        return yaml, json.loads(usage), json.loads(prices)
 
     def test_template_has_one_slot_for_each_block_and_no_external_resources(self):
         page = TEMPLATE.read_text(encoding="utf-8")
         self.assertEqual(page.count(runner.EDITOR_PLAYBOOKS_SLOT), 1)
         self.assertEqual(page.count(runner.EDITOR_USAGE_SLOT), 1)
+        self.assertEqual(page.count(runner.EDITOR_PRICES_SLOT), 1)
         self.assertNotRegex(page, r'<(?:script|link|img)[^>]+(?:src|href)="https?:')
 
     def test_editor_embeds_the_effective_playbooks_and_live_quota_without_opening(self):
@@ -66,7 +68,7 @@ class EditorTest(unittest.TestCase):
         self.assertEqual(Path(payload["path"]), target.resolve())
         self.assertFalse(payload["opened"])
         self.assertEqual(payload["liveUsage"], ["claude"])
-        yaml, usage = self.blocks(target.read_text(encoding="utf-8"))
+        yaml, usage, _ = self.blocks(target.read_text(encoding="utf-8"))
         self.assertEqual(yaml, runner.bundled_playbooks_path().read_text(encoding="utf-8").rstrip("\n"))
         self.assertEqual(usage, {"claude": {"short": 26, "week": 69, "opus": 0, "reset": 49, "expires": None}})
 
@@ -83,6 +85,26 @@ class EditorTest(unittest.TestCase):
         page = page_path.read_text(encoding="utf-8")
         self.assertIn("<\\/SCRIPT>", page)
         self.assertNotIn("</SCRIPT>", page)
+
+    def test_editor_carries_the_input_and_output_price_of_every_model_in_the_price_table(self):
+        self.policy.with_name(runner.USER_PRICES_FILE).write_text(json.dumps({"models": {
+            "claude/sonnet": {"input": 7},
+            "acme/big": {"input": 12, "output": 40, "source": "https://example.test/prices", "asOf": "2026-10-01"},
+        }}), encoding="utf-8")
+        code, _, err = self.call("editor", "--no-open", "--policy", self.policy)
+        self.assertEqual(code, 0, err)
+        _, _, prices = self.blocks(self.policy.with_name(runner.EDITOR_FILE).read_text(encoding="utf-8"))
+        bundled = json.loads((ROOT / "skills" / "alethe" / runner.PRICES_FILE).read_text(encoding="utf-8"))["models"]
+        self.assertEqual(set(prices), set(bundled) | {"acme/big"})
+        self.assertEqual(prices["claude/sonnet"], {"input": 7, "output": bundled["claude/sonnet"]["output"]})
+        self.assertEqual(prices["acme/big"], {"input": 12, "output": 40})
+        self.assertTrue(all(set(entry) == {"input", "output"} for entry in prices.values()))
+
+    def test_a_broken_price_table_leaves_the_prices_block_empty(self):
+        self.policy.with_name(runner.USER_PRICES_FILE).write_text("{oops", encoding="utf-8")
+        code, _, err = self.call("editor", "--no-open", "--policy", self.policy)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.blocks(self.policy.with_name(runner.EDITOR_FILE).read_text(encoding="utf-8"))[2], {})
 
     def test_editor_refuses_a_broken_playbooks_copy(self):
         Path(os.environ["ALETHE_ORCHESTRATE_PLAYBOOKS"]).write_text("version: 1\nplaybooks: [oops\n", encoding="utf-8")

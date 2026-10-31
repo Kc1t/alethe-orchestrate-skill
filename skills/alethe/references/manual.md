@@ -170,7 +170,9 @@ needs only what you know; use `null` for anything its CLI did not report:
   or in PowerShell `(Get-Content -Raw <template>).Replace('__PLAYBOOKS_YAML__', (Get-Content -Raw
   <yaml>)) | Set-Content <page>`. Optionally put the quota you read in the `live-usage` block, as
   `{"claude": {"short": 26, "week": 69, "opus": 0, "reset": 49}}` (percent used; `reset` is hours
-  until the weekly window resets). Open the page; a red line at the top names a YAML error.
+  until the weekly window resets). To simulate `price-above`, optionally put the price table in the
+  `model-prices` block, as `{"claude/sonnet": {"input": 2, "output": 10}}` (USD per 1M tokens).
+  Open the page; a red line at the top names a YAML error.
 - No Windows `.cmd` shim handling: run the commands through your own shell, which handles the shim,
   and keep newlines and quotes inside `task.md` rather than in arguments.
 - No `status` or `mark`: keep `<folder>/state.md` with one line per worker (id, phase, status,

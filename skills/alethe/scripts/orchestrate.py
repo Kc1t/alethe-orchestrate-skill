@@ -1177,6 +1177,7 @@ EDITOR_TEMPLATE = Path(__file__).resolve().parent.parent / "assets" / "editor.ht
 EDITOR_FILE = "alethe-playbooks.html"
 EDITOR_PLAYBOOKS_SLOT = "\n__PLAYBOOKS_YAML__\n"
 EDITOR_USAGE_SLOT = '<script type="application/json" id="live-usage">{}</script>'
+EDITOR_PRICES_SLOT = '<script type="application/json" id="model-prices">{}</script>'
 EDITOR_WINDOWS = {"claude": {"5h": "short", "week": "week", "opus": "opus"}, "codex": {"5h": "short", "week": "week"}}
 
 
@@ -1208,12 +1209,18 @@ def write_editor(policy_path: Path, target: Optional[Path] = None) -> Dict[str, 
     except PlanError:
         # a broken usage cache only drops the live quota preset
         usage = {}
+    try:
+        models = load_prices(policy_path)["models"]
+        prices = {key: {"input": entry["input"], "output": entry["output"]} for key, entry in models.items()}
+    except PlanError:
+        prices = {}
     page = read_playbooks(EDITOR_TEMPLATE)
-    for slot in (EDITOR_PLAYBOOKS_SLOT, EDITOR_USAGE_SLOT):
+    for slot in (EDITOR_PLAYBOOKS_SLOT, EDITOR_USAGE_SLOT, EDITOR_PRICES_SLOT):
         if page.count(slot) != 1:
             raise PlanError(f"the editor template at {EDITOR_TEMPLATE} has no {slot.strip()} slot")
     page = page.replace(EDITOR_PLAYBOOKS_SLOT, "\n" + script_safe(text.rstrip("\n")) + "\n", 1)
     page = page.replace(EDITOR_USAGE_SLOT, EDITOR_USAGE_SLOT.replace("{}", script_safe(json.dumps(usage))), 1)
+    page = page.replace(EDITOR_PRICES_SLOT, EDITOR_PRICES_SLOT.replace("{}", script_safe(json.dumps(prices))), 1)
     path = (target or policy_path.with_name(EDITOR_FILE)).expanduser().resolve()
     atomic_write_text(path, page)
     return {"path": str(path), "playbooks": str(effective_playbooks_path(policy_path)),
