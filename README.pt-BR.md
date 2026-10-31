@@ -232,6 +232,20 @@ nos outros sistemas, com uma pasta por orquestração dentro de `orchestrations/
       <sub>Kauã Miguel - Dev · Português</sub>
     </td>
   </tr>
+  <tr>
+    <td>
+      <a href="https://www.youtube.com/watch?v=ujW-e6w3NQA">
+        <img src="https://i.ytimg.com/vi/ujW-e6w3NQA/hqdefault.jpg" alt="How to Orchestrate AI Agents with a FREE Skill" width="100%">
+      </a>
+    </td>
+    <td>
+      <strong><a href="https://www.youtube.com/watch?v=ujW-e6w3NQA">How to Orchestrate AI Agents with a FREE Skill</a></strong>
+      <br><br>
+      Um tutorial de como orquestrar agentes de IA de código com a skill gratuita Alethe Orchestrate.
+      <br><br>
+      <sub>Kauã Miguel - Dev · Português</sub>
+    </td>
+  </tr>
 </table>
 
 ## Exemplo de Playbook
