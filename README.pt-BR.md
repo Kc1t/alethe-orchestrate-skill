@@ -6,7 +6,7 @@
     <img src="./docs/assets/alethe.png" alt="Logo do Alethe" width="120">
   </a>
 
-  <h1 align="center">alethe-orchestrate</h1>
+  <h1 align="center">alethe-orchestrate</h1> 
 
   <p align="center"><b>Orquestre agentes de código, e prove que valeu a pena.</b></p>
 
@@ -61,6 +61,33 @@ Ou copie `skills/alethe` para `~/.claude/skills/`, `~/.codex/skills/` ou
     <img src="./docs/assets/drawings/how-it-works-light.svg" alt="Você pede ao seu agente para orquestrar uma refatoração. O agente líder escolhe um playbook, escreve os briefs e faz o dry-run do plano; o orchestrate.py roda uma wave de workers: Claude Code no haiku, só leitura; Codex com esforço baixo, escrevendo na própria worktree; Antigravity, só leitura. Eles deixam result.md, diff.patch e outcome.json, e as transcrições completas ficam no disco. O líder lê só os resultados, confere, integra e marca cada um, roda a próxima wave e no fim gera o relatório" width="900">
   </picture>
 </p>
+
+## Barra no Desktop (Windows)
+
+Uma barra opcional, sempre no topo, em [`widget/`](widget/) (Tauri 2, Rust). Personagens pixelados trabalham em suas mesas
+e o personagem muda conforme o agente que está rodando um worker agora (Claude Code, Codex, Antigravity, Kimi). O monitoramento lê
+os arquivos do runner; o setup e a inicialização automática também alteram configurações do usuário. A versão da barra é 0.1.0, independente da skill v21.
+
+<p align="center">
+  <img src="./public/alethe-bar.png" alt="A barra Alethe com o painel de setup aberto: agentes encontrados, perfil, objetivo e o botão Instalar e configurar" width="420">
+</p>
+
+- **▶ CLI** abre a CLI do agente num terminal, dentro do projeto escolhido. Na árvore de trabalho atual, o campo de pedido envia texto adaptado ao Claude ou Codex; caracteres não permitidos viram espaços e o limite é de 1.500 caracteres. Antigravity e Kimi abrem sem receber o texto. A seção **4. Projetos** lista pastas lidas de `~/.claude.json` e permite adicionar outras.
+- **◈ Diagrama** abre o mapa de rotas da orquestração atual (o fluxo do playbook se nada rodou ainda).
+- **⚙ Setup** mostra quais CLIs estão instaladas e logadas, deixa escolher o perfil (base, savings, aggressive) e o objetivo (save, balanced, max, freestyle), e **Instalar e configurar** instala a skill para as CLIs detectadas e nas pastas existentes (`~/.claude`, `~/.codex`, `~/.agents`), salva suas escolhas e liga o modo sempre ligado, com um hook no `~/.claude/settings.json` do Claude Code. Após o setup terminar com sucesso, abra uma nova sessão do agente e invoque a skill quando necessário. Depois de instalado, o botão vira **Aplicar** e grava um novo perfil ou objetivo e instala a skill em destinos detectados posteriormente; **Reinstalar** copia a skill de novo para pegar uma versão nova. Reinstalar sobrescreve os arquivos correspondentes, mantém a cópia dos playbooks e evita duplicar o hook; arquivos ausentes do pacote não são removidos. A última página do instalador oferece um atalho na área de trabalho, e o painel tem a caixa **Abrir a barra ao iniciar o Windows** (desligada por padrão). O painel abre expandido na primeira vez, e **▲ Mostrar menos** (ou a engrenagem) volta para a barra. Ao abrir, a barra consulta o GitHub por uma release mais nova (tag `bar-vX.Y.Z`) e mostra um botão **⬆** que abre a página de download. Também oferece instalar o Python pelo `winget` se faltar.
+
+**Opção 1, instalador.** Gere-o (veja abaixo) e rode `widget/src-tauri/target/release/bundle/nsis/Alethe Bar_<versão>_x64-setup.exe`. Ele inclui a skill; o setup da barra também precisa de Python e de uma CLI de agente instalada.
+
+**Opção 2, rodar direto.**
+
+```sh
+cd widget
+npm install
+npm run dev        # roda a barra
+npm run build      # gera o instalador e o alethe-bar.exe em src-tauri/target/release/
+```
+
+Precisa de [Rust](https://rustup.rs), das Visual Studio Build Tools (carga C++), Node.js e WebView2, que o Windows 11 já traz. O `alethe-bar.exe` solto acha a skill quando está dentro deste repositório ou já instalada em `~/.claude/skills`.
 
 ## Comandos
 

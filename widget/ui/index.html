@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Alethe</title>
+<style>
+  :root { --bg:#14151a; --fg:#e8e8ee; --mut:#8b8d98; --line:#2a2c36; --acc:#7c83ff; --ok:#4ade80; --bad:#f87171; }
+  * { box-sizing:border-box; margin:0; user-select:none; }
+  html,body { background:var(--bg); color:var(--fg); font:13px "Segoe UI",system-ui,sans-serif; overflow:hidden; }
+  #bar { height:64px; display:flex; align-items:center; gap:8px; padding:0 10px; border-bottom:1px solid var(--line); }
+  #stage { display:flex; gap:6px; min-width:64px; }
+  canvas { image-rendering:pixelated; width:80px; height:56px; }
+  #label { flex:1; line-height:1.25; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #label small { display:block; color:var(--mut); }
+  button { background:#22242e; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 9px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  button.primary { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  #close { padding:4px 7px; color:var(--mut); }
+  #ask { display:flex; align-items:flex-start; gap:8px; padding:6px 10px; border-bottom:1px solid var(--line); }
+  #req { flex:1; min-width:0; height:32px; max-height:120px; resize:none; overflow:hidden; background:#22242e; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; line-height:18px; user-select:text; }
+  #req:focus { outline:none; border-color:var(--acc); }
+  #ask select { flex:none; height:32px; }
+  #panel { padding:12px; display:none; flex-direction:column; gap:10px; height:calc(100vh - var(--top, 108px)); overflow:auto; user-select:text; }
+  h3 { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); margin-bottom:4px; }
+  .cli { display:flex; gap:6px; flex-wrap:wrap; }
+  .cli span { padding:3px 8px; border-radius:99px; border:1px solid var(--line); }
+  .cli .y { color:var(--ok); } .cli .n { color:var(--mut); }
+  .opts { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .opts label { border:1px solid var(--line); border-radius:6px; padding:6px 8px; cursor:pointer; display:block; }
+  .opts label:has(input:checked) { border-color:var(--acc); background:#1d1f2e; }
+  .opts input[type=radio] { position:absolute; opacity:0; } .opts label:has(input:focus-visible) { outline:2px solid var(--acc); outline-offset:2px; }
+  .opts b { display:block; } .opts i { color:var(--mut); font-style:normal; font-size:11px; }
+  select { background:#22242e; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px; font:inherit; max-width:110px; }
+  details > summary { cursor:pointer; list-style:none; } details > summary::before { content:"▾ "; color:var(--mut); } details:not([open]) > summary::before { content:"▸ "; }
+  #plist { max-height:130px; overflow:auto; margin:4px 0 6px; }
+  .prow { display:flex; align-items:center; gap:6px; } .prow label { flex:1; min-width:0; cursor:pointer; padding:2px 0; }
+  .prow input { margin-right:6px; } .prow b { margin-right:6px; } .prow i { color:var(--mut); font-style:normal; font-size:11px; }
+  .prow button { padding:1px 6px; color:var(--mut); }
+  #log { font:12px Consolas,monospace; white-space:pre-wrap; color:var(--mut); }
+</style>
+</head>
+<body>
+<div id="bar" data-tauri-drag-region>
+  <div id="stage" data-tauri-drag-region></div>
+  <div id="label" data-tauri-drag-region></div>
+  <button id="upd" class="primary" style="display:none"></button>
+  <button id="cli" title="Abrir a CLI do agente (com o pedido, se preenchido)">&#9654; CLI</button>
+  <button id="diagram" title="Ver o report da orquestra&#231;&#227;o atual">&#9672; Report</button>
+  <button id="gear" title="Setup e modo">&#9881;</button>
+  <button id="close" title="Fechar">&#10005;</button>
+</div>
+<div id="ask">
+  <textarea id="req" rows="1" placeholder="O que voc&#234; quer fazer?" title="Enter abre o agente j&#225; com este pedido (claude/codex); Shift+Enter quebra a linha"></textarea>
+  <select id="proj" title="Projeto onde a CLI abre"></select>
+</div>
+
+<div id="panel">
+  <div><h3>1. Agentes encontrados</h3><div class="cli" id="found">verificando...</div></div>
+  <div><h3>2. Perfil</h3>
+    <div class="opts" id="profiles">
+      <label><input type="radio" name="p" value="base" checked><b>Base</b><i>cada tier no modelo usual</i></label>
+      <label><input type="radio" name="p" value="savings"><b>Savings</b><i>um degrau mais barato</i></label>
+      <label><input type="radio" name="p" value="aggressive"><b>Aggressive</b><i>m&#225;ximo de agentes</i></label>
+    </div></div>
+  <div><h3>3. Objetivo</h3>
+    <div class="opts" id="goals">
+      <label><input type="radio" name="g" value="save"><b>Save</b><i>gastar o m&#237;nimo</i></label>
+      <label><input type="radio" name="g" value="balanced" checked><b>Balanced</b><i>delegar quando compensa</i></label>
+      <label><input type="radio" name="g" value="max"><b>Max</b><i>paralelo e revisores</i></label>
+    </div>
+    <div class="opts" style="grid-template-columns:1fr;margin-top:6px">
+      <label><input type="radio" name="g" value="freestyle"><b>Freestyle</b><i>trabalha normal, s&#243; vigia custo e sugere rotas mais baratas</i></label>
+    </div></div>
+  <div style="display:flex;gap:8px">
+    <button class="primary" id="setup" style="flex:1">Instalar e configurar</button>
+    <button id="py" style="display:none">Instalar Python</button>
+    <button id="flow" style="display:none" title="Mostra o diagrama (fluxo do playbook) que est&#225; aplicado agora">Diagrama</button>
+    <button id="reinstall" style="display:none" title="Copia a skill de novo, para pegar uma vers&#227;o nova">Reinstalar</button>
+  </div>
+  <details open><summary><h3 style="display:inline">4. Projetos</h3></summary>
+    <div id="plist"></div>
+    <button id="padd">+ Adicionar projeto...</button>
+  </details>
+  <label class="opts" style="display:block"><label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" id="auto" style="display:inline"> <span><b style="display:inline">Abrir a barra ao iniciar o Windows</b></span></label></label>
+  <div id="log"></div>
+  <button id="less">&#9650; Mostrar menos</button>
+</div>
+
+<script>
+const { invoke } = window.__TAURI__.core;
+const $ = (id) => document.getElementById(id);
+const NAMES = { claude: "Claude Code", codex: "Codex", agy: "Antigravity", kimi: "Kimi Code", custom: "CLI custom" };
+// shirt / hair / screen glow per agent
+const LOOK = {
+  claude: ["#d97757", "#3b2a20", "#ffb89c"], codex: ["#e8e8ee", "#14151a", "#9ae6b4"],
+  agy: ["#4285f4", "#7a4fb0", "#a8c7fa"], kimi: ["#16c2a3", "#222", "#9ff2e0"], custom: ["#9aa0a6", "#4a3b2e", "#d0d4d8"],
+};
+const SKIN = "#f1c9a5", DARK = "#2b2d38", DESK = "#6b4f3a";
+
+function scene(c, who, state, t) {
+  const [shirt, hair, glow] = LOOK[who] || LOOK.custom;
+  const x = c.getContext("2d");
+  const r = (col, a, b, w, h) => { x.fillStyle = col; x.fillRect(a, b, w, h); };
+  x.clearRect(0, 0, 20, 14);
+  r(DESK, 0, 11, 20, 1); r(DESK, 1, 12, 1, 2); r(DESK, 18, 12, 1, 2);        // desk
+  r(DARK, 1, 2, 8, 6); r(DARK, 4, 8, 2, 3);                                    // monitor
+  r(state === "error" ? "#7f1d1d" : state === "idle" ? "#1a1b22" : "#0b0c10", 2, 3, 6, 4); // screen
+  if (state === "work") for (let i = 0; i < 4; i++) r(glow, 3, 3 + i, 1 + ((t + i * 3) % 4), 1);
+  if (state === "done") r("#4ade80", 3, 4, 4, 2);
+  if (state === "error") r("#f87171", 4, 3, 1, 3), r("#f87171", 4, 6, 1, 1);
+  r(DARK, 16, 6, 1, 6);                                                        // chair
+  r(shirt, 11, 7, 5, 4);                                                       // body
+  r(SKIN, 12, 3, 4, 4); r(hair, 12, 2, 4, 2); r(hair, 15, 3, 1, 3);            // head
+  r(state === "idle" ? SKIN : DARK, 12, 5, 1, 1);                              // eye (closed when asleep)
+  if (state === "idle") r("#555a6e", 12, 5, 2, 1);
+  if (state === "done") { r(SKIN, 10, 4, 1, 3); r("#fde047", 8 + (t % 2) * 6, 1, 1, 1); }
+  else r(SKIN, 9, 9 + (state === "work" ? t % 2 : 1), 3, 1);                  // hands on keyboard
+  r(DARK, 8, 10, 3, 1);                                                        // keyboard
+  if (state === "idle") r("#8b8d98", 14 + (t % 3), 0, 1, 1), r("#8b8d98", 15 + (t % 3), 1, 1, 1);
+}
+
+let cur = { providers: [], hasRuns: false, last: null }, flash = null, wasRunning = false, tick = 0;
+const stage = $("stage");
+
+function draw() {
+  tick++;
+  $("diagram").title = cur.hasRuns ? "Ver o report da rota percorrida nesta orquestração" : "Ver o report (sem execuções ainda: abre o fluxo do playbook)";
+  const who = cur.providers.length ? cur.providers : ["claude"];
+  while (stage.children.length > who.length) stage.lastChild.remove();
+  while (stage.children.length < who.length) {
+    const c = document.createElement("canvas"); c.width = 20; c.height = 14; c.dataset.tauriDragRegion = ""; stage.appendChild(c);
+  }
+  const state = cur.providers.length ? "work" : flash === "done" ? "done" : flash ? "error" : "idle";
+  who.forEach((w, i) => scene(stage.children[i], w, state, tick));
+  const names = cur.providers.map((p) => NAMES[p] || p).join(" + ");
+  $("label").innerHTML = cur.providers.length
+    ? `<b>${names}</b><small>${cur.context || "trabalhando agora"}</small>`
+    : `<b>${({done: "Concluído", failed: "Falhou", partial: "Parcial", stopped: "Parado", interrupted: "Interrompido"})[flash] || (flash ? "Estado desconhecido" : "Aguardando")}</b><small>${cur.context || "nenhum agente rodando"}</small>`;
+}
+
+async function poll() {
+  try {
+    cur = await invoke("bar_state");
+    if (wasRunning && !cur.runActive) {
+      flash = cur.last || "unknown";
+      setTimeout(() => { flash = null; }, 5000);
+    }
+    wasRunning = !!cur.runActive;
+  } catch (e) { /* keep last state */ }
+}
+setInterval(draw, 400); setInterval(poll, 1000); poll(); draw();
+
+// --- projects: saved by hand plus folders Claude Code already ran in ---
+let manual = [], sel = "", detected = [];
+try { const s = JSON.parse(localStorage.getItem("proj") || "{}"); manual = s.manual || []; sel = s.sel || ""; } catch (e) {}
+const saveProj = () => { try { localStorage.setItem("proj", JSON.stringify({ manual, sel })); } catch (e) {} };
+const esc = (t) => String(t).replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+const base = (p) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop();
+function projects() {
+  const seen = new Set();
+  return [...manual.map((p) => [p, false]), ...detected.map((p) => [p, true])].filter(([p]) => {
+    const k = p.toLowerCase().replace(/\\/g, "/"); if (seen.has(k)) return false; seen.add(k); return true;
+  });
+}
+function renderProj() {
+  const list = projects();
+  $("proj").innerHTML = '<option value="">Pasta do usu\u00e1rio</option>' + list.map(([p]) => `<option value="${esc(p)}">${esc(base(p))}</option>`).join("");
+  $("proj").value = sel;
+  $("plist").innerHTML = list.map(([p, auto]) =>
+    `<div class="prow"><label><input type="radio" name="pr" value="${esc(p)}" ${p === sel ? "checked" : ""}><b>${esc(base(p))}</b><i>${esc(p)}${auto ? " \u00b7 detectado" : ""}</i></label>${auto ? "" : `<button data-rm="${esc(p)}" title="Remover">\u2715</button>`}</div>`
+  ).join("") || "<i>nenhum projeto ainda</i>";
+}
+$("proj").onchange = () => { sel = $("proj").value; saveProj(); renderProj(); };
+$("plist").onchange = (e) => { sel = e.target.value; saveProj(); renderProj(); };
+$("plist").onclick = (e) => {
+  const p = e.target.dataset && e.target.dataset.rm; if (!p) return;
+  manual = manual.filter((m) => m !== p); if (sel === p) sel = ""; saveProj(); renderProj();
+};
+$("padd").onclick = async () => {
+  const p = await invoke("pick_folder").catch(() => null); if (!p) return;
+  if (!manual.includes(p)) manual.unshift(p); sel = p; saveProj(); renderProj();
+};
+renderProj(); invoke("known_projects").then((d) => { detected = d; renderProj(); }).catch(() => {});
+
+// --- buttons ---
+invoke("check_update").then((u) => {
+  if (!u.newer) return;
+  const b = $("upd"); b.textContent = "⬆ v" + u.latest; b.title = "Nova versão disponível (você tem " + u.current + ")";
+  b.style.display = ""; b.onclick = () => invoke("open_url", { url: u.url });
+}).catch(() => {});
+let lead = "claude";
+$("cli").onclick = async () => {
+  const provider = cur.providers[0] || lead, request = $("req").value;
+  try {
+    await invoke("open_cli", { provider, cwd: sel || null, request: request || null });
+    if (["claude", "codex"].includes(provider) && $("req").value === request) { $("req").value = ""; grow(); }
+  } catch (e) { open_panel(); $("log").textContent = String(e); }
+};
+$("req").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("cli").click(); } };
+// the request box grows with the text; the window follows, the project picker keeps its size
+function fit() {
+  const top = 64 + $("ask").offsetHeight;
+  document.documentElement.style.setProperty("--top", top + "px");
+  invoke("resize", { height: top + (panelOpen ? 556 : 0) });
+}
+function grow() {
+  const r = $("req"); r.style.height = "32px";
+  r.style.height = Math.min(r.scrollHeight + 2, 120) + "px";
+  r.style.overflowY = r.scrollHeight + 2 > 120 ? "auto" : "hidden";
+  fit();
+}
+$("req").oninput = grow;
+$("diagram").onclick = async () => {
+  const b = $("diagram"); b.disabled = true;
+  try { await invoke("show_diagram", { hasRuns: cur.hasRuns }); } catch (e) { open_panel(); $("log").textContent = String(e); }
+  b.disabled = false;
+};
+$("flow").onclick = async () => {
+  const b = $("flow"); b.disabled = true;
+  try { await invoke("show_diagram", { hasRuns: false }); } catch (e) { $("log").textContent = String(e); }
+  b.disabled = false;
+};
+$("close").onclick =() => window.__TAURI__.window.getCurrentWindow().close();
+
+let panelOpen = false;
+function open_panel() {
+  if (panelOpen) return; panelOpen = true;
+  $("panel").style.display = "flex"; fit(); check();
+}
+function close_panel() { panelOpen = false; $("panel").style.display = "none"; fit(); }
+$("gear").onclick = () => (panelOpen ? close_panel() : open_panel());
+$("less").onclick = close_panel;
+invoke("autostart", {}).then((on) => ($("auto").checked = on)).catch(() => {});
+$("auto").onchange = () => { const enable = $("auto").checked; invoke("autostart", { enable }).catch((e) => { $("auto").checked = !enable; $("log").textContent = String(e); }); };
+try { if (!localStorage.getItem("seen")) { localStorage.setItem("seen", "1"); open_panel(); } } catch (e) {}
+
+async function check() {
+  const d = await invoke("doctor");
+  if (d.error) {
+    $("found").innerHTML = `<span class="n">${d.error}</span>`;
+    $("py").style.display = /Python/.test(d.error) ? "" : "none"; return;
+  }
+  $("py").style.display = "none";
+  $("found").innerHTML = (d.providers || []).map((p) =>
+    `<span class="${p.installed ? "y" : "n"}">${p.installed ? "✓" : "✗"} ${NAMES[p.provider] || p.provider}` +
+    `${p.installed && p.loggedIn === false ? " (sem login)" : ""}</span>`).join("");
+  const first = (d.providers || []).find((p) => p.installed); if (first) lead = first.provider;
+}
+$("py").onclick = () => { invoke("install_python"); $("log").textContent = "Instalando Python via winget... depois reabra o app."; };
+let isInstalled = false;
+async function refreshInstalled() {
+  isInstalled = await invoke("installed");
+  $("setup").textContent = isInstalled ? "Aplicar" : "Instalar e configurar";
+  $("reinstall").style.display = $("flow").style.display = isInstalled ? "" : "none";
+}
+async function run(full) {
+  const v = (n) => document.querySelector(`input[name=${n}]:checked`).value;
+  $("setup").disabled = $("reinstall").disabled = true; $("log").textContent = "configurando...";
+  try {
+    const r = await invoke("setup", { profile: v("p"), goal: v("g"), full });
+    const done = full ? "Pronto. Abra uma nova sessão do agente." : "Aplicado. Vale a partir do próximo pedido.";
+    $("log").textContent = r.log.join("\n") + "\n\n" + (r.ok ? done : "Algum passo falhou.");
+  } catch (e) { $("log").textContent = String(e); }
+  finally { $("setup").disabled = $("reinstall").disabled = false; check(); refreshInstalled(); }
+}
+$("setup").onclick = () => run(!isInstalled);
+$("reinstall").onclick = () => run(true);
+refreshInstalled();
+</script>
+</body>
+</html>

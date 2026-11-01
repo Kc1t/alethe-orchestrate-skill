@@ -62,6 +62,33 @@ Or copy `skills/alethe` into `~/.claude/skills/`, `~/.codex/skills/` or
   </picture>
 </p>
 
+## Desktop Bar (Windows)
+
+An optional always-on-top bar in [`widget/`](widget/) (Tauri 2, Rust). Pixel characters work at their desks, and the
+character changes with the agent running a worker right now (Claude Code, Codex, Antigravity, Kimi). Monitoring reads the
+runner's files; setup and autostart also change user settings. The bar's version is 0.1.0, independent of skill v21.
+
+<p align="center">
+  <img src="./public/alethe-bar.png" alt="The Alethe bar with its setup panel open: the agents found, the profile, the goal and the Install and configure button" width="420">
+</p>
+
+- **▶ CLI** opens the agent's CLI in a terminal in the selected project. In the current working tree, the request field passes adapted text to Claude or Codex; disallowed characters become spaces and text is limited to 1,500 characters. Antigravity and Kimi open without receiving the text. **4. Projects** lists folders from `~/.claude.json` and lets you add your own.
+- **◈ Diagram** opens the routing map of the current orchestration (the playbook flow if nothing ran yet).
+- **⚙ Setup** shows which CLIs are installed and logged in, lets you pick the profile (base, savings, aggressive) and the goal (save, balanced, max, freestyle), and **Install and configure** installs the skill for detected CLIs and existing skill folders (`~/.claude`, `~/.codex`, `~/.agents`), saves your choices and turns the always-on mode on, with a hook in Claude Code's `~/.claude/settings.json`. After setup succeeds, open a new agent session and invoke the skill as needed. Once installed, the button becomes **Apply** and saves a new profile or goal and installs the skill in any newly detected destinations; **Reinstall** copies the skill again to pick up a new version. Reinstall copies the bundled files over matching files, keeps the playbooks copy and avoids duplicating the hook; files absent from the bundle are not removed. The installer's last page offers a desktop shortcut, and the panel has an **Open the bar when Windows starts** checkbox (off by default). The panel opens expanded on the first launch, and **▲ Show less** (or the gear) folds it back to the bar. On start the bar checks GitHub for a newer release (tag `bar-vX.Y.Z`) and shows a **⬆** button that opens its download page. It also offers to install Python with `winget` when it is missing.
+
+**Option 1, installer.** Build it (see below) and run `widget/src-tauri/target/release/bundle/nsis/Alethe Bar_<version>_x64-setup.exe`. It includes the skill; bar setup also needs Python and an installed agent CLI.
+
+**Option 2, run it directly.**
+
+```sh
+cd widget
+npm install
+npm run dev        # runs the bar
+npm run build      # writes the installer and alethe-bar.exe to src-tauri/target/release/
+```
+
+Needs [Rust](https://rustup.rs), the Visual Studio Build Tools (C++ workload), Node.js and WebView2, which Windows 11 includes. The loose `alethe-bar.exe` finds the skill when it sits inside this repository or is already installed in `~/.claude/skills`.
+
 ## Commands
 
 Type them after `/alethe`.
