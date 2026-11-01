@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Alethe Bar",
+  "version": "0.1.0",
+  "identifier": "dev.alethe.bar",
+  "build": { "frontendDist": "../ui" },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      { "label": "main", "title": "Alethe", "width": 600, "height": 64, "decorations": false,
+        "alwaysOnTop": true, "resizable": false, "maximizable": false }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "resources": { "../../skills/alethe": "skill" }
+  }
+}

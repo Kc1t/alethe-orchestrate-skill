@@ -62,6 +62,33 @@ Ou copie `skills/alethe` para `~/.claude/skills/`, `~/.codex/skills/` ou
   </picture>
 </p>
 
+## Barra no Desktop (Windows)
+
+Uma barra opcional, sempre no topo, em [`widget/`](widget/) (Tauri 2, Rust). Personagens pixelados trabalham em suas mesas
+e o personagem muda conforme o agente que está rodando um worker agora (Claude Code, Codex, Antigravity, Kimi). Ela só lê
+os arquivos que o runner já grava, então a skill não muda.
+
+<p align="center">
+  <img src="./public/alethe-bar.png" alt="A barra Alethe com o painel de setup aberto: agentes encontrados, perfil, objetivo e o botão Instalar e configurar" width="420">
+</p>
+
+- **▶ CLI** abre a CLI do agente num terminal, dentro do projeto escolhido no menu ao lado. A seção **4. Projetos** do painel (recolhível) lista as pastas onde o Claude Code já rodou, lidas de `~/.claude.json`, e deixa você adicionar as suas.
+- **◈ Diagrama** abre o mapa de rotas da orquestração atual (o fluxo do playbook se nada rodou ainda).
+- **⚙ Setup** mostra quais CLIs estão instaladas e logadas, deixa escolher o perfil (base, savings, aggressive) e o objetivo (save, balanced, max, freestyle), e **Instalar e configurar** instala a skill em cada CLI de agente cuja pasta existe (`~/.claude`, `~/.codex`, `~/.agents`), salva suas escolhas e liga o modo sempre ligado, com um hook no `~/.claude/settings.json` do Claude Code. **Depois disso o orquestrador já está 100% funcional:** abra a CLI com ▶ numa sessão nova e peça o trabalho normalmente, sem `/alethe` (no Codex e no Antigravity, digite `/alethe`). Depois de instalado, o botão vira **Aplicar** e só grava um novo perfil ou objetivo, sem reinstalar; **Reinstalar** copia a skill de novo para pegar uma versão nova. Rodar de novo é seguro: sobrescreve a skill com os arquivos mais novos, mantém a sua cópia dos playbooks e não duplica o hook. A última página do instalador oferece um atalho na área de trabalho, e o painel tem a caixa **Abrir a barra ao iniciar o Windows** (desligada por padrão). O painel abre expandido na primeira vez, e **▲ Mostrar menos** (ou a engrenagem) volta para a barra. Ao abrir, a barra consulta o GitHub por uma release mais nova (tag `bar-vX.Y.Z`) e mostra um botão **⬆** que abre a página de download. Também oferece instalar o Python pelo `winget` se faltar.
+
+**Opção 1, instalador.** Gere-o (veja abaixo) e rode `widget/src-tauri/target/release/bundle/nsis/Alethe Bar_<versão>_x64-setup.exe`. Ele leva a skill dentro, nada mais é necessário.
+
+**Opção 2, rodar direto.**
+
+```sh
+cd widget
+npm install
+npm run dev        # roda a barra
+npm run build      # gera o instalador e o alethe-bar.exe em src-tauri/target/release/
+```
+
+Precisa de [Rust](https://rustup.rs), das Visual Studio Build Tools (carga C++), Node.js e WebView2, que o Windows 11 já traz. O `alethe-bar.exe` solto acha a skill quando está dentro deste repositório ou já instalada em `~/.claude/skills`.
+
 ## Comandos
 
 Digite depois de `/alethe`.
