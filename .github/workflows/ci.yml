@@ -33,3 +33,14 @@ jobs:
           python-version: "3.13"
       - run: python -m pip install pyyaml
       - run: python tools/check_playbooks.py
+
+  widget:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: widget/src-tauri
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo test --locked
+      - run: node tests/test_widget_ui.cjs
+        working-directory: .
