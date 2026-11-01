@@ -46,7 +46,7 @@
   <div id="label" data-tauri-drag-region></div>
   <button id="upd" class="primary" style="display:none"></button>
   <button id="cli" title="Abrir a CLI do agente (com o pedido, se preenchido)">&#9654; CLI</button>
-  <button id="diagram" title="Ver o diagrama da orquestra&#231;&#227;o atual">&#9672; Diagrama</button>
+  <button id="diagram" title="Ver o report da orquestra&#231;&#227;o atual">&#9672; Report</button>
   <button id="gear" title="Setup e modo">&#9881;</button>
   <button id="close" title="Fechar">&#10005;</button>
 </div>
@@ -75,6 +75,7 @@
   <div style="display:flex;gap:8px">
     <button class="primary" id="setup" style="flex:1">Instalar e configurar</button>
     <button id="py" style="display:none">Instalar Python</button>
+    <button id="flow" style="display:none" title="Mostra o diagrama (fluxo do playbook) que est&#225; aplicado agora">Diagrama</button>
     <button id="reinstall" style="display:none" title="Copia a skill de novo, para pegar uma vers&#227;o nova">Reinstalar</button>
   </div>
   <details open><summary><h3 style="display:inline">4. Projetos</h3></summary>
@@ -124,7 +125,7 @@ const stage = $("stage");
 
 function draw() {
   tick++;
-  $("diagram").title = cur.hasRuns ? "Ver a rota percorrida nesta orquestração" : "Ver o fluxo do playbook desta orquestração";
+  $("diagram").title = cur.hasRuns ? "Ver o report da rota percorrida nesta orquestração" : "Ver o report (sem execuções ainda: abre o fluxo do playbook)";
   const who = cur.providers.length ? cur.providers : ["claude"];
   while (stage.children.length > who.length) stage.lastChild.remove();
   while (stage.children.length < who.length) {
@@ -215,7 +216,12 @@ $("diagram").onclick = async () => {
   try { await invoke("show_diagram", { hasRuns: cur.hasRuns }); } catch (e) { open_panel(); $("log").textContent = String(e); }
   b.disabled = false;
 };
-$("close").onclick = () => window.__TAURI__.window.getCurrentWindow().close();
+$("flow").onclick = async () => {
+  const b = $("flow"); b.disabled = true;
+  try { await invoke("show_diagram", { hasRuns: false }); } catch (e) { $("log").textContent = String(e); }
+  b.disabled = false;
+};
+$("close").onclick =() => window.__TAURI__.window.getCurrentWindow().close();
 
 let panelOpen = false;
 function open_panel() {
@@ -246,7 +252,7 @@ let isInstalled = false;
 async function refreshInstalled() {
   isInstalled = await invoke("installed");
   $("setup").textContent = isInstalled ? "Aplicar" : "Instalar e configurar";
-  $("reinstall").style.display = isInstalled ? "" : "none";
+  $("reinstall").style.display = $("flow").style.display = isInstalled ? "" : "none";
 }
 async function run(full) {
   const v = (n) => document.querySelector(`input[name=${n}]:checked`).value;
