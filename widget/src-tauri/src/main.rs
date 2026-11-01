@@ -4,11 +4,24 @@ use serde_json::{json, Value};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::process::Child;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 use tauri::{LogicalSize, Manager, WebviewWindow};
 
 const NO_WINDOW: u32 = 0x0800_0000;
 const REL_SCRIPT: &str = "skills/alethe/scripts/orchestrate.py";
+static OPEN_CLIS: OnceLock<Mutex<Vec<(String, Child)>>> = OnceLock::new();
+
+fn open_clis() -> &'static Mutex<Vec<(String, Child)>> {
+    OPEN_CLIS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn active_clis() -> Vec<String> {
+    let mut children = open_clis().lock().unwrap();
+    children.retain_mut(|(_, child)| child.try_wait().map_or(true, |status| status.is_none()));
+    children.iter().map(|(provider, _)| provider.clone()).collect()
+}
 
 fn env(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).map(PathBuf::from)
@@ -60,10 +73,13 @@ fn find_script(app: &tauri::AppHandle) -> Option<PathBuf> {
             }
         }
     }
-    let bundled = app.path().resource_dir().ok()?.join("skill/scripts/orchestrate.py");
-    if bundled.is_file() { return Some(bundled); }
-    let installed = home().join(".claude/skills/alethe/scripts/orchestrate.py");
-    installed.is_file().then_some(installed)
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let bundled = resource_dir.join("skill/scripts/orchestrate.py");
+        if bundled.is_file() { return Some(bundled); }
+    }
+    [".claude", ".codex", ".agents"].iter()
+        .map(|dir| home().join(dir).join("skills/alethe/scripts/orchestrate.py"))
+        .find(|p| p.is_file())
 }
 
 fn run_py(app: &tauri::AppHandle, args: &[&str]) -> Result<String, String> {
@@ -94,10 +110,11 @@ fn fresh(p: &Path, secs: u64) -> bool {
 /// so a stale mtime means the runner died.
 #[tauri::command]
 fn bar_state() -> Value {
+    let clis = active_clis();
     let folder = read_json(&orch_home().join("current.json"))
         .and_then(|v| v["folder"].as_str().map(PathBuf::from));
     let Some(folder) = folder.filter(|f| f.is_dir()) else {
-        return json!({"providers": [], "hasRuns": false, "last": null});
+        return json!({"providers": clis, "runActive": false, "hasRuns": false, "last": null, "context": "CLI aberta"});
     };
     let mut states: Vec<PathBuf> = vec![folder.join("state.json")];
     if let Ok(rd) = std::fs::read_dir(&folder) {
@@ -105,10 +122,12 @@ fn bar_state() -> Value {
     }
     states.retain(|p| p.is_file());
     states.sort();
-    let mut providers: Vec<String> = Vec::new();
+    let mut providers: Vec<String> = clis.clone();
+    let mut run_active = false;
     for p in &states {
         let Some(s) = read_json(p) else { continue };
         if s["status"] == "running" && fresh(p, 30) {
+            run_active = true;
             for w in s["workers"].as_object().into_iter().flat_map(|m| m.values()) {
                 if w["status"] == "running" {
                     let name = w["provider"].as_str().unwrap_or("custom").to_string();
@@ -118,7 +137,9 @@ fn bar_state() -> Value {
         }
     }
     let last = states.last().and_then(|p| read_json(p)).and_then(|s| s["status"].as_str().map(String::from));
-    json!({"providers": providers, "hasRuns": !states.is_empty(), "last": last})
+    let meta = read_json(&folder.join("orchestration.json")).unwrap_or(Value::Null);
+    let context = ["playbook", "profile", "goal"].iter().filter_map(|k| meta[*k].as_str()).collect::<Vec<_>>().join(" · ");
+    json!({"providers": providers, "runActive": run_active, "hasRuns": !states.is_empty(), "last": last, "context": if !run_active && !clis.is_empty() { "CLI aberta" } else { &context }})
 }
 
 /// Adds the alethe hook to ~/.claude/settings.json once, keeping everything else.
@@ -160,10 +181,42 @@ fn step(log: &mut Vec<String>, ok: bool, msg: String) {
     log.push(format!("{} {}", if ok { "✓" } else { "✗" }, msg));
 }
 
+fn skill_targets(root: &Path, providers: &Value) -> Vec<PathBuf> {
+    let present = |name: &str| providers.as_array().into_iter().flatten()
+        .any(|p| p["provider"] == name && p["installed"] == true);
+    [(".claude", present("claude")), (".codex", present("codex")),
+     (".agents", present("codex") || present("agy") || present("kimi"))]
+        .into_iter().filter(|(dir, detected)| *detected || root.join(dir).is_dir())
+        .map(|(dir, _)| root.join(dir).join("skills/alethe")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detected_clis_get_skill_targets_even_before_config_exists() {
+        let root = Path::new("nonexistent-alethe-test-home");
+        let providers = json!([
+            {"provider": "claude", "installed": true},
+            {"provider": "codex", "installed": true},
+            {"provider": "kimi", "installed": false}
+        ]);
+        assert_eq!(skill_targets(root, &providers), vec![
+            root.join(".claude/skills/alethe"), root.join(".codex/skills/alethe"),
+            root.join(".agents/skills/alethe")
+        ]);
+        assert!(skill_targets(root, &json!([])).is_empty());
+    }
+}
+
 /// Install the skill for every agent CLI that is present, then apply profile and goal.
 #[tauri::command]
 fn setup(app: tauri::AppHandle, profile: String, goal: String, full: bool) -> Value {
     let mut log: Vec<String> = Vec::new();
+    if !["base", "savings", "aggressive"].contains(&profile.as_str()) || !["save", "balanced", "max", "freestyle"].contains(&goal.as_str()) {
+        return json!({"ok": false, "log": ["✗ Invalid profile or goal"]});
+    }
     if python().is_none() {
         step(&mut log, false, "Python 3 is missing: use the Install Python button".into());
         return json!({"ok": false, "log": log});
@@ -173,20 +226,34 @@ fn setup(app: tauri::AppHandle, profile: String, goal: String, full: bool) -> Va
         return json!({"ok": false, "log": log});
     };
     let skill = script.parent().and_then(Path::parent).unwrap().to_path_buf();
-    if full { // install/update only on the first run or on request; applying a choice skips this
-    for agent in [".claude", ".codex", ".agents"] {
-        let base = home().join(agent);
-        if !base.is_dir() { continue; }
-        let dest = base.join("skills/alethe");
-        let same = dest.canonicalize().ok() == skill.canonicalize().ok();
-        let ok = same || { let _ = std::fs::remove_dir_all(&dest); copy_dir(&skill, &dest).is_ok() };
-        step(&mut log, ok, format!("skill installed in {}", dest.display()));
+    let providers = match run_py(&app, &["probe"]).and_then(|s| serde_json::from_str::<Value>(&s).map_err(|e| e.to_string())) {
+        Ok(p) if p.is_array() => p,
+        Ok(_) => return json!({"ok": false, "log": ["✗ Invalid CLI detection result"]}),
+        Err(e) => return json!({"ok": false, "log": [format!("✗ CLI detection failed: {}", e)]}),
+    };
+    let targets = skill_targets(&home(), &providers);
+    if targets.is_empty() {
+        step(&mut log, false, "No agent CLI or skill folder found".into());
+    }
+    for dest in targets {
+        if !full && dest.join("SKILL.md").is_file() && dest.join("scripts/orchestrate.py").is_file() && dest.join("playbooks.yaml").is_file() { continue; }
+        let same = matches!((dest.canonicalize(), skill.canonicalize()), (Ok(a), Ok(b)) if a == b);
+        let result = if same { Ok(()) } else { copy_dir(&skill, &dest) };
+        step(&mut log, result.is_ok(), format!("skill installed in {}{}", dest.display(), result.err().map(|e| format!(": {}", e)).unwrap_or_default()));
     }
     // Always-on mode: a UserPromptSubmit hook reminds the lead on every prompt, so /alethe is not needed.
-    let hooked = claude_hook(&home().join(".claude/skills/alethe/scripts/orchestrate.py"));
-    step(&mut log, hooked.is_ok(), format!("Claude Code hook (always on){}", hooked.err().map(|e| format!(": {}", e)).unwrap_or_default()));
-    let created = run_py(&app, &["playbook", "--init"]).is_ok();
-    step(&mut log, true, if created { "playbooks copy created".into() } else { "playbooks copy kept (already exists)".into() });
+    if home().join(".claude/skills/alethe/scripts/orchestrate.py").is_file() {
+        let hooked = claude_hook(&home().join(".claude/skills/alethe/scripts/orchestrate.py"));
+        step(&mut log, hooked.is_ok(), format!("Claude Code hook (always on){}", hooked.err().map(|e| format!(": {}", e)).unwrap_or_default()));
+    }
+    let current = run_py(&app, &["playbook", "--path"]).ok().map(PathBuf::from);
+    let bundled = skill.join("playbooks.yaml");
+    let has_copy = current.as_ref().map_or(false, |p| p.is_file() && p.canonicalize().ok() != bundled.canonicalize().ok());
+    if has_copy {
+        step(&mut log, true, "playbooks copy kept".into());
+    } else {
+        let created = run_py(&app, &["playbook", "--init"]);
+        step(&mut log, created.is_ok(), format!("playbooks copy{}", created.err().map(|e| format!(": {}", e)).unwrap_or_default()));
     }
     let mut cmd = |label: &str, args: &[&str]| {
         let r = run_py(&app, args);
@@ -196,8 +263,9 @@ fn setup(app: tauri::AppHandle, profile: String, goal: String, full: bool) -> Va
     cmd(&format!("mode on, goal {}", goal), &["mode", "on", "--everywhere", "--goal", &goal]);
     // profile lives as `profile: <id>` in the user's playbooks copy
     let path = run_py(&app, &["playbook", "--path"]).ok().map(PathBuf::from);
-    let applied = path.filter(|p| p.file_name().map_or(false, |n| n == "alethe-playbooks.yaml")).and_then(|p| {
+    let applied = path.filter(|p| p.canonicalize().ok() != bundled.canonicalize().ok()).and_then(|p| {
         let text = std::fs::read_to_string(&p).ok()?;
+        if !text.lines().any(|l| l.starts_with("profile:")) { return None; }
         let out: Vec<String> = text.lines().map(|l| if l.starts_with("profile:") { format!("profile: {}", profile) } else { l.to_string() }).collect();
         std::fs::write(&p, out.join("\n") + "\n").ok()
     });
@@ -244,23 +312,43 @@ fn install_python() -> Result<(), String> {
 
 /// Opens the agent CLI in a terminal, where the user types the request.
 #[tauri::command]
-fn open_cli(provider: String, cwd: Option<String>) -> Result<(), String> {
+fn open_cli(provider: String, cwd: Option<String>, request: Option<String>) -> Result<(), String> {
     let dir = cwd.map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(home);
     let cli = match provider.as_str() { "codex" => "codex", "agy" => "agy", "kimi" => "kimi", _ => "claude" };
-    let wt = Command::new("cmd")
-        .args(["/c", "start", "", "wt.exe", "-d"]).arg(&dir).args(["--title", "Alethe", "cmd", "/k", cli])
-        .creation_flags(NO_WINDOW).spawn();
-    if wt.is_err() {
-        Command::new("cmd").args(["/c", "start", "", "cmd", "/k", cli]).current_dir(&dir)
-            .creation_flags(NO_WINDOW).spawn().map_err(|e| e.to_string())?;
-    }
+    // The request goes through cmd, so only plain text survives: no & | < > ^ % ! " ; or newlines.
+    // Only claude and codex are known to take the first prompt as an argument.
+    let prompt: Vec<String> = request
+        .map(|r| r.chars().map(|c| if c.is_alphanumeric() || " .,:?-_/()'".contains(c) { c } else { ' ' }).collect::<String>())
+        .map(|r| r.split_whitespace().collect::<Vec<_>>().join(" ").trim_start_matches('-').chars().take(1500).collect::<String>())
+        .filter(|r| !r.is_empty() && matches!(cli, "claude" | "codex"))
+        // invoke the skill explicitly instead of relying on the model noticing the hook reminder
+        .map(|r| if cli == "claude" { format!("/alethe {r}") } else { format!("Use the alethe skill. {r}") })
+        .into_iter().collect();
+    let child = Command::new("cmd")
+        .args(["/c", cli]).args(&prompt).current_dir(&dir)
+        .creation_flags(0x0000_0010).spawn().map_err(|e| e.to_string())?;
+    open_clis().lock().unwrap().push((cli.to_string(), child));
     Ok(())
 }
 
 /// The routing map of the current orchestration; the playbook flow when nothing has run yet.
 #[tauri::command]
 fn show_diagram(app: tauri::AppHandle, has_runs: bool) -> Result<String, String> {
-    run_py(&app, if has_runs { &["report", "--format", "html"] } else { &["editor"] })
+    if has_runs {
+        if let Ok(out) = run_py(&app, &["report", "--format", "html"]) { return Ok(out); }
+        // no readable run (e.g. a stale pointer): show the playbook flow instead of an error
+    }
+    // The editor opens on its first playbook; open it on the current orchestration's instead.
+    let page: Value = serde_json::from_str(&run_py(&app, &["editor", "--no-open"])?).map_err(|e| e.to_string())?;
+    let path = page["path"].as_str().ok_or("editor printed no path")?.to_string();
+    let playbook = read_json(&orch_home().join("current.json"))
+        .and_then(|v| v["folder"].as_str().map(PathBuf::from))
+        .and_then(|f| read_json(&f.join("orchestration.json")))
+        .and_then(|m| m["playbook"].as_str().map(String::from));
+    let mut url = format!("file:///{}", path.replace('\\', "/").replace(' ', "%20"));
+    if let Some(p) = playbook { url.push_str(&format!("#playbook:{p}")); }
+    quiet("cmd").args(["/c", "start", "", &url]).spawn().map_err(|e| e.to_string())?;
+    Ok(path)
 }
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -277,8 +365,8 @@ fn autostart(enable: Option<bool>) -> Result<bool, String> {
             if ok { Ok(true) } else { Err("could not write the Run key".into()) }
         }
         Some(false) => {
-            let _ = quiet("reg").args(["delete", RUN_KEY, "/v", "AletheBar", "/f"]).output();
-            Ok(false)
+            let out = quiet("reg").args(["delete", RUN_KEY, "/v", "AletheBar", "/f"]).output().map_err(|e| e.to_string())?;
+            if out.status.success() { Ok(false) } else { Err("could not remove the Run key".into()) }
         }
     }
 }

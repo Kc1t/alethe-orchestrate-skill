@@ -1,6 +1,6 @@
 # Alethe Orchestrate: arquitetura e funcionalidades
 
-Documento de análise do repositório (versão 21 da skill) e plano para o widget de Windows.
+Documento de análise do repositório: skill versão 21 e Alethe Bar versão 0.1.0. As alterações locais do widget ainda precisam de validação funcional antes de serem consideradas prontas para distribuição.
 
 ## 1. O que é
 
@@ -8,8 +8,8 @@ Uma **Agent Skill** (`SKILL.md`) e plugin para Claude Code e Codex. Um agente "l
 tarefas limitadas para outros agentes de CLI (**Claude Code, Codex, Antigravity, Kimi** ou qualquer CLI),
 seguindo *playbooks* que economizam contexto e cota. No fim, gera um relatório com tokens e custo reais.
 
-Não há servidor, banco de dados nem dependência externa: é **Python stdlib** (3.9+) chamando CLIs como subprocessos,
-sem shell e sem rede, mais duas páginas HTML offline.
+O runner usa **Python stdlib** (3.9+) para chamar CLIs como subprocessos, mais duas páginas HTML offline. Sem Python,
+o líder pode seguir o fluxo manual da skill. O widget é um aplicativo separado, com dependências Tauri, e consulta o GitHub para verificar atualizações.
 
 ## 2. Estrutura do repositório
 
@@ -29,6 +29,7 @@ skills/alethe/
 tools/check_playbooks.py                    validador de playbooks (CI)
 tests/                                      pytest + CLIs falsas (fake_cli.py etc.)
 docs/assets/                                imagens e desenhos do README
+widget/                                     barra Windows (Tauri 2, Rust e HTML)
 ```
 
 ## 3. Arquitetura
@@ -56,13 +57,13 @@ Usuário ──/alethe──▶ Agente líder (Claude Code / Codex)
 | Camada | Responsabilidade |
 |---|---|
 | **Playbooks** | Parser YAML próprio (sem PyYAML), validação estrutural, cache, merge do playbook do usuário (`alethe-playbooks.yaml`) sobre o embutido |
-| **Policy** | `alethe-orchestrate.json`: providers, tiers de modelo (cheap/standard/strong), budgets, limiares de cota |
+| **Policy** | `alethe-orchestrate.json`: preferências e limites; tiers e perfis ficam nos playbooks (um `modelTiers` legado na policy ainda prevalece) |
 | **Plano** | `validate_plan`: IDs, providers, estratégia, limites, paths relativos, prompts; `dry-run` mostra o que rodaria sem executar |
 | **Execução** | `run_batch` / `run_worker`: monta o comando de cada CLI, aplica modo leitura vs escrita, worktrees git, timeout, job object no Windows, parada via arquivo `stop` |
 | **Salvaguardas** | Orçamento por wave e por orquestração, teto de custo nos workers Claude, bloqueio de flags inseguras, tripwire (git detecta worker "read-only" que escreveu), sem subagentes aninhados |
 | **Cota** | Lê uso de Claude e Codex antes de cada wave, prevê consumo, recusa iniciar passando da linha de parada |
 | **Observabilidade** | `status`, `wait`, `report` (md/json/html), `journal.jsonl` com cada mudança de rota e seu motivo |
-| **Modos / hook** | `always`/`on`/`freestyle`: o hook `UserPromptSubmit` injeta lembrete de objetivo e regras a cada prompt; expira após 12 h sem uso |
+| **Modos / hook** | `on` expira após 12 h sem uso; `always` vale em todos os projetos sem expiração. O hook `UserPromptSubmit` lembra o objetivo e as regras no Claude Code |
 | **Editor** | `editor.html` autocontido: edita playbooks, simula cota, copia o YAML de volta |
 
 ### Modelo de dados em disco
@@ -103,64 +104,26 @@ validate, dry-run, new, run, wait, budget, note, status, stop, mark, report, lis
 
 **Qualidade:** testes em `tests/` com CLIs falsas, CI em `.github/workflows/ci.yml`, validação de playbooks em `tools/`.
 
-## 5. Novo requisito: widget de barra para Windows
+## 5. Alethe Bar para Windows
 
-### Objetivo
-
-Um programa de Windows que vira **uma barra retangular fina** (sempre no topo) com **personagens pixelados trabalhando
-no PC**. O personagem exibido muda conforme a IA que está trabalhando no momento: Claude Code, Codex, Antigravity, Kimi,
-custom. Sem worker ativo, o personagem dorme/descansa.
-
-### Fonte de dados (sem alterar o runner)
-
-O widget só **lê arquivos** que o `orchestrate.py` já grava:
-
-1. Ler `orchestrations/current.json` → pasta ativa.
-2. Fazer polling (~1 s) dos `state.json` das waves dessa pasta.
-3. Workers com `status == "running"` → `provider` (`claude`, `codex`, `agy`, `kimi`, custom) decide o personagem.
-4. Vários ativos ao mesmo tempo → vários personagens lado a lado, ou rodízio.
-5. `status` do batch (`queued`, `running`, `succeeded`, `failed`) → animação (digitando, comemorando, erro).
-
-Limitação a decidir: o **agente líder** (a sessão interativa do Claude Code/Codex) não aparece em `state.json`, só os
-workers. Para mostrar o líder também, opções: (a) um comando `orchestrate.py lead-active <provider>` chamado pelo hook
-existente, gravando um arquivo pequeno; (b) detectar processos `claude.exe`/`codex.exe` com CPU ativa. Recomendado: (a),
-é só uma linha no hook já existente.
-
-### Tecnologia
-
-| Opção | Prós | Contras |
-|---|---|---|
-| **Python + tkinter** (recomendada para MVP) | Zero dependência, coerente com o projeto (stdlib only), janela sem borda + `-topmost` + `-transparentcolor` | Visual menos polido, sprites via `PhotoImage` com zoom inteiro |
-| Electron | Fácil animar sprites com CSS/canvas, node já instalado | ~100 MB, pesado para uma barra |
-| Tauri (Rust) | Leve e bonito, `.exe` pequeno | Exige instalar Rust, não existe no ambiente hoje |
-
-Ponto de decisão: se o objetivo é distribuir um `.exe` para outras pessoas sem exigir Python, vale Tauri. Para uso
-próprio e iterar rápido, tkinter.
-
-### Design proposto
+O plano resultou em um widget dentro de `widget/`, implementado com Tauri 2, Rust e HTML, em vez do MVP em tkinter inicialmente proposto. A versão do aplicativo é **0.1.0**, independente da versão 21 da skill. A configuração Tauri prevê um instalador NSIS que inclui a skill.
 
 ```text
 widget/
-├── alethe_bar.py        janela + loop de polling + animação (~200 linhas)
-├── sprites/             um PNG de sprite sheet por provider (ex.: 16x16 px, 4 frames de "trabalhando")
-└── README.md
+├── ui/index.html             interface e personagens desenhados em canvas
+├── src-tauri/src/main.rs     comandos, leitura do estado e integração com Windows
+├── src-tauri/tauri.conf.json janela, recursos e instalador
+└── package.json              comandos de desenvolvimento e build
 ```
 
-- Janela: `overrideredirect(True)`, `-topmost`, altura ~48 px, largura ~400 px, arrastável, posição salva.
-- Cada personagem: sprite sheet com estados `idle`, `work`, `done`, `error`; ampliado com *nearest neighbor* para manter o pixel art.
-- Cor/identidade por provider: laranja (Claude), preto/branco (Codex), azul (Antigravity), etc., alinhadas com `docs/assets/agents/`.
-- Texto mínimo: nome do worker e tempo decorrido; clique abre `report.html` da orquestração atual.
-- Empacotamento: `pyinstaller --onefile --noconsole` e atalho na pasta Inicializar para abrir com o Windows.
+A barra consulta `current.json` e os arquivos `state.json` a cada segundo, mostra os providers com workers em execução e anima estados de repouso, trabalho, conclusão ou erro. O estado só identifica workers: a atividade do agente líder não é monitorada. A janela fica no topo e pode ser arrastada; salvar sua posição não está implementado.
 
-### Etapas
+O painel oferece configuração da skill, perfil e objetivo, seleção de projeto, abertura de CLI, diagrama, inicialização com Windows e verificação de atualização. O monitoramento lê o estado gravado pelo runner, mas as ações de setup e inicialização alteram configurações do usuário. O setup do widget requer Python; o uso manual da skill sem Python continua possível fora dele.
 
-1. **MVP:** barra + leitura de `current.json`/`state.json` + 1 sprite por provider + estado idle/work.
-2. Estados `done`/`error`, múltiplos personagens simultâneos, arrastar e salvar posição.
-3. Hook do líder (`lead-active`) para mostrar a IA principal.
-4. Empacotar `.exe` e iniciar com o Windows.
+Na árvore de trabalho atual, o campo de pedido abre Claude ou Codex com o texto adaptado: caracteres fora da lista permitida são substituídos por espaços e o texto é limitado a 1.500 caracteres. Antigravity e Kimi abrem sem receber o pedido. Essas alterações locais ainda não foram validadas em uma sessão interativa.
 
-### Pendências para o usuário
+### Verificação do plano
 
-- Os sprites precisam ser criados (à mão, em editor de pixel art, ou gerados). Posso gerar um conjunto inicial em código.
-- Confirmar se o widget deve ficar **dentro deste repositório** (`widget/`) ou em um projeto separado que apenas lê a pasta de dados.
-- Confirmar tkinter (MVP) vs Tauri (distribuição).
+1. **Implementado no código:** barra Tauri, leitura de estado, múltiplos providers ativos, animações, seleção de projeto, setup, configuração de início com Windows e receita para instalador NSIS.
+2. **Ainda pendente:** exibir atividade do líder e salvar a posição da janela. Os personagens são desenhados em canvas, sem sprite sheets separados.
+3. **Verificação necessária:** testar setup, abertura das CLIs, diagrama, animações e instalador no Windows. Compilar o código não confirma esses fluxos.

@@ -17,7 +17,11 @@
   button.primary { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
   button:disabled { opacity:.5; cursor:default; }
   #close { padding:4px 7px; color:var(--mut); }
-  #panel { padding:12px; display:none; flex-direction:column; gap:10px; height:calc(100vh - 64px); overflow:auto; user-select:text; }
+  #ask { display:flex; align-items:flex-start; gap:8px; padding:6px 10px; border-bottom:1px solid var(--line); }
+  #req { flex:1; min-width:0; height:32px; max-height:120px; resize:none; overflow:hidden; background:#22242e; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; line-height:18px; user-select:text; }
+  #req:focus { outline:none; border-color:var(--acc); }
+  #ask select { flex:none; height:32px; }
+  #panel { padding:12px; display:none; flex-direction:column; gap:10px; height:calc(100vh - var(--top, 108px)); overflow:auto; user-select:text; }
   h3 { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); margin-bottom:4px; }
   .cli { display:flex; gap:6px; flex-wrap:wrap; }
   .cli span { padding:3px 8px; border-radius:99px; border:1px solid var(--line); }
@@ -25,7 +29,8 @@
   .opts { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
   .opts label { border:1px solid var(--line); border-radius:6px; padding:6px 8px; cursor:pointer; display:block; }
   .opts label:has(input:checked) { border-color:var(--acc); background:#1d1f2e; }
-  .opts input { display:none; } .opts b { display:block; } .opts i { color:var(--mut); font-style:normal; font-size:11px; }
+  .opts input[type=radio] { position:absolute; opacity:0; } .opts label:has(input:focus-visible) { outline:2px solid var(--acc); outline-offset:2px; }
+  .opts b { display:block; } .opts i { color:var(--mut); font-style:normal; font-size:11px; }
   select { background:#22242e; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:6px; font:inherit; max-width:110px; }
   details > summary { cursor:pointer; list-style:none; } details > summary::before { content:"▾ "; color:var(--mut); } details:not([open]) > summary::before { content:"▸ "; }
   #plist { max-height:130px; overflow:auto; margin:4px 0 6px; }
@@ -40,11 +45,14 @@
   <div id="stage" data-tauri-drag-region></div>
   <div id="label" data-tauri-drag-region></div>
   <button id="upd" class="primary" style="display:none"></button>
-  <select id="proj" title="Projeto onde a CLI abre"></select>
-  <button id="cli" title="Abrir a CLI do agente para digitar o pedido">&#9654; CLI</button>
-  <button id="diagram" title="Ver o diagrama da orquestra&#231;&#227;o atual">&#9672; Diagrama</button>
+  <button id="cli" title="Abrir a CLI do agente (com o pedido, se preenchido)">&#9654; CLI</button>
+  <button id="diagram" title="Ver o report da orquestra&#231;&#227;o atual">&#9672; Report</button>
   <button id="gear" title="Setup e modo">&#9881;</button>
   <button id="close" title="Fechar">&#10005;</button>
+</div>
+<div id="ask">
+  <textarea id="req" rows="1" placeholder="O que voc&#234; quer fazer?" title="Enter abre o agente j&#225; com este pedido (claude/codex); Shift+Enter quebra a linha"></textarea>
+  <select id="proj" title="Projeto onde a CLI abre"></select>
 </div>
 
 <div id="panel">
@@ -67,6 +75,7 @@
   <div style="display:flex;gap:8px">
     <button class="primary" id="setup" style="flex:1">Instalar e configurar</button>
     <button id="py" style="display:none">Instalar Python</button>
+    <button id="flow" style="display:none" title="Mostra o diagrama (fluxo do playbook) que est&#225; aplicado agora">Diagrama</button>
     <button id="reinstall" style="display:none" title="Copia a skill de novo, para pegar uma vers&#227;o nova">Reinstalar</button>
   </div>
   <details open><summary><h3 style="display:inline">4. Projetos</h3></summary>
@@ -116,27 +125,28 @@ const stage = $("stage");
 
 function draw() {
   tick++;
+  $("diagram").title = cur.hasRuns ? "Ver o report da rota percorrida nesta orquestração" : "Ver o report (sem execuções ainda: abre o fluxo do playbook)";
   const who = cur.providers.length ? cur.providers : ["claude"];
   while (stage.children.length > who.length) stage.lastChild.remove();
   while (stage.children.length < who.length) {
     const c = document.createElement("canvas"); c.width = 20; c.height = 14; c.dataset.tauriDragRegion = ""; stage.appendChild(c);
   }
-  const state = cur.providers.length ? "work" : flash || "idle";
+  const state = cur.providers.length ? "work" : flash === "done" ? "done" : flash ? "error" : "idle";
   who.forEach((w, i) => scene(stage.children[i], w, state, tick));
   const names = cur.providers.map((p) => NAMES[p] || p).join(" + ");
   $("label").innerHTML = cur.providers.length
-    ? `<b>${names}</b><small>trabalhando agora</small>`
-    : `<b>${flash === "done" ? "Concluído" : flash === "error" ? "Falhou" : "Aguardando"}</b><small>nenhum agente rodando</small>`;
+    ? `<b>${names}</b><small>${cur.context || "trabalhando agora"}</small>`
+    : `<b>${({done: "Concluído", failed: "Falhou", partial: "Parcial", stopped: "Parado", interrupted: "Interrompido"})[flash] || (flash ? "Estado desconhecido" : "Aguardando")}</b><small>${cur.context || "nenhum agente rodando"}</small>`;
 }
 
 async function poll() {
   try {
     cur = await invoke("bar_state");
-    if (wasRunning && !cur.providers.length) {
-      flash = cur.last === "failed" ? "error" : "done";
+    if (wasRunning && !cur.runActive) {
+      flash = cur.last || "unknown";
       setTimeout(() => { flash = null; }, 5000);
     }
-    wasRunning = cur.providers.length > 0;
+    wasRunning = !!cur.runActive;
   } catch (e) { /* keep last state */ }
 }
 setInterval(draw, 400); setInterval(poll, 1000); poll(); draw();
@@ -180,24 +190,49 @@ invoke("check_update").then((u) => {
   b.style.display = ""; b.onclick = () => invoke("open_url", { url: u.url });
 }).catch(() => {});
 let lead = "claude";
-$("cli").onclick = () => invoke("open_cli", { provider: cur.providers[0] || lead, cwd: sel || null }).catch((e) => ($("log").textContent = String(e)));
+$("cli").onclick = async () => {
+  const provider = cur.providers[0] || lead, request = $("req").value;
+  try {
+    await invoke("open_cli", { provider, cwd: sel || null, request: request || null });
+    if (["claude", "codex"].includes(provider) && $("req").value === request) { $("req").value = ""; grow(); }
+  } catch (e) { open_panel(); $("log").textContent = String(e); }
+};
+$("req").onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("cli").click(); } };
+// the request box grows with the text; the window follows, the project picker keeps its size
+function fit() {
+  const top = 64 + $("ask").offsetHeight;
+  document.documentElement.style.setProperty("--top", top + "px");
+  invoke("resize", { height: top + (panelOpen ? 556 : 0) });
+}
+function grow() {
+  const r = $("req"); r.style.height = "32px";
+  r.style.height = Math.min(r.scrollHeight + 2, 120) + "px";
+  r.style.overflowY = r.scrollHeight + 2 > 120 ? "auto" : "hidden";
+  fit();
+}
+$("req").oninput = grow;
 $("diagram").onclick = async () => {
   const b = $("diagram"); b.disabled = true;
   try { await invoke("show_diagram", { hasRuns: cur.hasRuns }); } catch (e) { open_panel(); $("log").textContent = String(e); }
   b.disabled = false;
 };
-$("close").onclick = () => window.__TAURI__.window.getCurrentWindow().close();
+$("flow").onclick = async () => {
+  const b = $("flow"); b.disabled = true;
+  try { await invoke("show_diagram", { hasRuns: false }); } catch (e) { $("log").textContent = String(e); }
+  b.disabled = false;
+};
+$("close").onclick =() => window.__TAURI__.window.getCurrentWindow().close();
 
 let panelOpen = false;
 function open_panel() {
   if (panelOpen) return; panelOpen = true;
-  $("panel").style.display = "flex"; invoke("resize", { height: 620 }); check();
+  $("panel").style.display = "flex"; fit(); check();
 }
-function close_panel() { panelOpen = false; $("panel").style.display = "none"; invoke("resize", { height: 64 }); }
+function close_panel() { panelOpen = false; $("panel").style.display = "none"; fit(); }
 $("gear").onclick = () => (panelOpen ? close_panel() : open_panel());
 $("less").onclick = close_panel;
 invoke("autostart", {}).then((on) => ($("auto").checked = on)).catch(() => {});
-$("auto").onchange = () => invoke("autostart", { enable: $("auto").checked }).catch((e) => { $("auto").checked = false; $("log").textContent = String(e); });
+$("auto").onchange = () => { const enable = $("auto").checked; invoke("autostart", { enable }).catch((e) => { $("auto").checked = !enable; $("log").textContent = String(e); }); };
 try { if (!localStorage.getItem("seen")) { localStorage.setItem("seen", "1"); open_panel(); } } catch (e) {}
 
 async function check() {
@@ -217,17 +252,17 @@ let isInstalled = false;
 async function refreshInstalled() {
   isInstalled = await invoke("installed");
   $("setup").textContent = isInstalled ? "Aplicar" : "Instalar e configurar";
-  $("reinstall").style.display = isInstalled ? "" : "none";
+  $("reinstall").style.display = $("flow").style.display = isInstalled ? "" : "none";
 }
 async function run(full) {
   const v = (n) => document.querySelector(`input[name=${n}]:checked`).value;
   $("setup").disabled = $("reinstall").disabled = true; $("log").textContent = "configurando...";
-  const r = await invoke("setup", { profile: v("p"), goal: v("g"), full });
-  const done = full
-    ? "Pronto e ligado: abra a CLI (bot\u00e3o \u25b6) e pe\u00e7a o trabalho normalmente, sem digitar /alethe. Abra uma sess\u00e3o nova do agente."
-    : "Aplicado. Vale a partir do pr\u00f3ximo pedido.";
-  $("log").textContent = r.log.join("\n") + "\n\n" + (r.ok ? done : "Algum passo falhou.");
-  $("setup").disabled = $("reinstall").disabled = false; check(); refreshInstalled();
+  try {
+    const r = await invoke("setup", { profile: v("p"), goal: v("g"), full });
+    const done = full ? "Pronto. Abra uma nova sessão do agente." : "Aplicado. Vale a partir do próximo pedido.";
+    $("log").textContent = r.log.join("\n") + "\n\n" + (r.ok ? done : "Algum passo falhou.");
+  } catch (e) { $("log").textContent = String(e); }
+  finally { $("setup").disabled = $("reinstall").disabled = false; check(); refreshInstalled(); }
 }
 $("setup").onclick = () => run(!isInstalled);
 $("reinstall").onclick = () => run(true);
