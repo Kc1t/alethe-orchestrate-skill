@@ -6,7 +6,7 @@
     <img src="./docs/assets/alethe.png" alt="Logo do Alethe" width="120">
   </a>
 
-  <h1 align="center">alethe-orchestrate</h1>
+  <h1 align="center">alethe-orchestrate</h1> 
 
   <p align="center"><b>Orquestre agentes de código, e prove que valeu a pena.</b></p>
 
