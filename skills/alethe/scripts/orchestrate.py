@@ -948,12 +948,21 @@ QUOTA_WINDOW_SLACK_SECONDS = 600
 CLAUDE_PROBE_MODEL = "haiku"
 CLAUDE_PROBE_SECONDS = 120
 CLAUDE_PROBE_PROMPT = "Reply with OK."
+AGY_PROBE_SECONDS = 90
 CODEX_TAIL_BYTES = 256 * 1024
 TOKENS_PER_MILLION = 1000000
 MAIN_QUOTA_WINDOWS = ("5h", "week")
-QUOTA_PROVIDERS = ("claude", "codex")
+QUOTA_PROVIDERS = ("claude", "codex", "agy")
 CLAUDE_QUOTA_WINDOWS = {"five_hour": "5h", "seven_day": "week", "seven_day_opus": "opus", "opus": "opus"}
 CODEX_QUOTA_WINDOWS = {300: "5h", 10080: "week"}
+AGY_QUOTA_WINDOWS = {
+    "gemini-5h": "5h",
+    "gemini-weekly": "week",
+    "gemini-argon-wtu-weekly": "argon",
+    "3p-5h": "3p-5h",
+    "3p-weekly": "3p-week",
+}
+AGY_THIRD_PARTY_MODELS = ("claude", "opus", "sonnet", "haiku", "gpt")
 TOKEN_PARTS = ("inputTokens", "cacheReadTokens", "cacheWriteTokens", "outputTokens")
 USAGE_LOCK = threading.Lock()
 
@@ -1019,6 +1028,41 @@ def claude_quota(values: Sequence[Any], observed_at: str) -> Optional[Dict[str, 
     if not windows:
         return None
     return {"provider": "claude", "windows": windows, "observedAt": observed_at, "source": "stream-json"}
+
+
+def agy_quota(values: Sequence[Any], observed_at: str) -> Optional[Dict[str, Any]]:
+    event = next(
+        (
+            value
+            for value in reversed(values)
+            if isinstance(value, dict)
+            and value.get("status") == "SUCCESS"
+            and isinstance(value.get("command"), dict)
+        ),
+        None,
+    )
+    if event is None:
+        return None
+    data = event["command"].get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("groups"), list):
+        return None
+    windows = {}
+    for group in data["groups"]:
+        if not isinstance(group, dict) or not isinstance(group.get("buckets"), list):
+            continue
+        for bucket in group["buckets"]:
+            if not isinstance(bucket, dict):
+                continue
+            name = AGY_QUOTA_WINDOWS.get(bucket.get("id"))
+            remaining = number(bucket.get("remaining_fraction"))
+            if name is None or remaining is None:
+                continue
+            window = quota_window((1.0 - remaining) * 100, bucket.get("reset_time"))
+            if window:
+                windows[name] = window
+    if not windows:
+        return None
+    return {"provider": "agy", "windows": windows, "observedAt": observed_at, "source": "agy -p /usage"}
 
 
 def codex_home() -> Path:
@@ -1168,7 +1212,11 @@ EDITOR_TEMPLATE = Path(__file__).resolve().parent.parent / "assets" / "editor.ht
 EDITOR_FILE = "alethe-playbooks.html"
 EDITOR_PLAYBOOKS_SLOT = "\n__PLAYBOOKS_YAML__\n"
 EDITOR_USAGE_SLOT = '<script type="application/json" id="live-usage">{}</script>'
-EDITOR_WINDOWS = {"claude": {"5h": "short", "week": "week", "opus": "opus"}, "codex": {"5h": "short", "week": "week"}}
+EDITOR_WINDOWS = {
+    "claude": {"5h": "short", "week": "week", "opus": "opus"},
+    "codex": {"5h": "short", "week": "week"},
+    "agy": {"5h": "short", "week": "week", "argon": "argon"},
+}
 
 
 def editor_usage(usage: Dict[str, Any], providers: Sequence[str], now: Optional[dt.datetime] = None) -> Dict[str, Any]:
@@ -1242,8 +1290,14 @@ def open_page(path: Path) -> bool:
 
 
 def worker_windows(worker: Dict[str, Any]) -> Tuple[str, ...]:
-    if worker["provider"] == "claude" and "opus" in str(worker.get("model") or "").lower():
+    model = str(worker.get("model") or "").lower()
+    if worker["provider"] == "claude" and "opus" in model:
         return (*MAIN_QUOTA_WINDOWS, "opus")
+    if worker["provider"] == "agy":
+        if "argon" in model:
+            return (*MAIN_QUOTA_WINDOWS, "argon")
+        if any(token in model for token in AGY_THIRD_PARTY_MODELS):
+            return ("3p-5h", "3p-week")
     return MAIN_QUOTA_WINDOWS
 
 
@@ -1278,6 +1332,23 @@ def probe_claude_quota(policy_path: Path) -> Optional[Dict[str, Any]]:
         except OSError as error:
             raise PlanError(f"could not start Claude: {error}") from error
     quota = claude_quota(json_values(completed.stdout.decode("utf-8", errors="replace"), "jsonl"), now_iso())
+    save_usage(policy_path, quota)
+    return quota
+
+
+def probe_agy_quota(policy_path: Path) -> Optional[Dict[str, Any]]:
+    launch = launch_command(resolve_executable("agy"))
+    args = [*launch, "-p", "/usage", "--output-format", "json", "--print-timeout", f"{AGY_PROBE_SECONDS}s"]
+    with tempfile.TemporaryDirectory(prefix="alethe-usage-") as folder:
+        try:
+            completed = subprocess.run(args, stdin=subprocess.DEVNULL, cwd=Path(folder),
+                env=worker_environment(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=AGY_PROBE_SECONDS)
+        except subprocess.TimeoutExpired as error:
+            raise PlanError(f"Antigravity did not answer within {AGY_PROBE_SECONDS} seconds") from error
+        except OSError as error:
+            raise PlanError(f"could not start Antigravity: {error}") from error
+    quota = agy_quota(json_values(completed.stdout.decode("utf-8", errors="replace"), "json"), now_iso())
     save_usage(policy_path, quota)
     return quota
 
@@ -1348,7 +1419,7 @@ def quota_forecast(workers: Sequence[Dict[str, Any]], policy_path: Path, usage: 
 def usage_summary(payload: Dict[str, Any]) -> List[str]:
     lines = []
     for provider, reading in payload["providers"].items():
-        if provider not in QUOTA_PROVIDERS and reading["missing"]:
+        if provider not in ("claude", "codex") and reading["missing"]:
             continue
         parts = []
         for name, window in reading["windows"].items():
@@ -1514,10 +1585,10 @@ def preview_usage_cost(workers: Sequence[Dict[str, Any]], policy_path: Path) -> 
         estimates.append({"listPriceEstimateUsd": round(worker["estimatedPromptTokens"] * price["input"] / TOKENS_PER_MILLION, 8) if price else None,
                           "listPriceAsOf": price["asOf"] if price else None})
         reading = usage["providers"].get(provider, {})
-        if not reading.get("low"):
+        low_windows = [name for name in worker_windows(worker) if name in reading.get("windows", {}) and reading["windows"][name]["low"]]
+        if not low_windows:
             continue
-        name = max((name for name in MAIN_QUOTA_WINDOWS if name in reading["windows"]),
-                   key=lambda name: reading["windows"][name]["usedPercent"])
+        name = max(low_windows, key=lambda name: reading["windows"][name]["usedPercent"])
         window = reading["windows"][name]
         reset = timestamp(window["resetsAt"]).astimezone().strftime("%H:%M")
         warning = f"{worker['id']}: {provider} is at {window['usedPercent']:g}% of its {name} window (resets {reset})"
@@ -5436,6 +5507,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             information_parser.add_argument(
                 "--refresh-claude", action="store_true", help="read Claude's quota now with a one-line Haiku call"
             )
+            information_parser.add_argument(
+                "--refresh-agy", action="store_true", help="read Antigravity's quota now with agy -p /usage (zero tokens)"
+            )
     scaffold_parser = subparsers.add_parser(
         "scaffold", help="print a starter plan for a strategy"
     )
@@ -5588,6 +5662,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             policy_path = (args.policy or default_policy_path()).expanduser().resolve()
             if args.command == "usage" and args.refresh_claude and probe_claude_quota(policy_path) is None:
                 print("warning: Claude printed no rate-limit event, so its quota stays unknown", file=sys.stderr)
+            if args.command == "usage" and args.refresh_agy and probe_agy_quota(policy_path) is None:
+                print("warning: Antigravity printed no quota buckets, so its quota stays unknown", file=sys.stderr)
             payload = usage_payload(policy_path) if args.command == "usage" else models_payload(policy_path)
             print(json.dumps(payload, indent=2, ensure_ascii=False))
             return 0

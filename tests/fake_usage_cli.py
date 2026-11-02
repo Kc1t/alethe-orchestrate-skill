@@ -6,9 +6,31 @@ from pathlib import Path
 
 
 def main():
-    mode, result = sys.argv[1:3]
-    sys.stdin.read()
+    mode = sys.argv[1]
+    result = sys.argv[2] if len(sys.argv) > 2 else ""
     now = dt.datetime.now(dt.timezone.utc)
+    reset_iso = (now + dt.timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+    if mode == "agy-usage":
+        print(json.dumps({
+            "status": "SUCCESS",
+            "command": {
+                "data": {
+                    "groups": [
+                        {
+                            "buckets": [
+                                {"id": "gemini-5h", "remaining_fraction": 0.14, "reset_time": reset_iso},
+                                {"id": "gemini-weekly", "remaining_fraction": 0.80, "reset_time": reset_iso},
+                                {"id": "gemini-argon-wtu-weekly", "remaining_fraction": 0.03, "reset_time": reset_iso},
+                                {"id": "3p-5h", "remaining_fraction": 0.52, "reset_time": reset_iso},
+                                {"id": "3p-weekly", "remaining_fraction": 0.75, "reset_time": reset_iso},
+                            ]
+                        }
+                    ]
+                }
+            },
+        }))
+        return 0
+    sys.stdin.read()
     reset = int((now + dt.timedelta(hours=2)).timestamp())
     if mode.startswith("claude"):
         for used in (0.1, 0.86):
