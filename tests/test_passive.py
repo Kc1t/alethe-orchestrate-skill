@@ -523,6 +523,25 @@ class PassiveTest(unittest.TestCase):
             self.now += 60
             self.assertIn("this session", self.hook())
 
+    def test_antigravity_appears_only_with_a_reading_and_spare_room_follows_prefer(self):
+        now = dt.datetime.fromtimestamp(self.now, dt.timezone.utc)
+        settings = dict(r.PASSIVE_DEFAULTS)
+        prices = r.load_prices(self.policy)
+        usage = r.usage_payload(self.policy, refresh=False, now=now)
+        self.assertNotIn("Antigravity", r.passive_quota_text(usage, prices, settings))
+        self.save_quota(percent=10, provider="agy")
+        usage = r.usage_payload(self.policy, refresh=False, now=now)
+        text = r.passive_quota_text(usage, prices, settings)
+        self.assertIn("Antigravity 5h 10%", text)
+        # Not in the default prefer list, so its spare room is not advertised.
+        self.assertNotRegex(text, r"Antigravity[^.]*room to spare")
+        text = r.passive_quota_text(usage, prices, {**settings, "prefer": ["codex", "agy", "claude"]})
+        self.assertRegex(text, r"Antigravity[^.]*: room to spare")
+        self.save_quota(percent=10, provider="claude")
+        usage = r.usage_payload(self.policy, refresh=False, now=now)
+        text = r.passive_quota_text(usage, prices, {**settings, "prefer": ["claude", "codex"]})
+        self.assertNotRegex(text, r"Claude[^.]*room to spare")
+
     def test_passive_config_defaults_overrides_and_validation(self):
         data = r.playbook_settings(self.policy)
         self.assertEqual(data["passive"], r.PASSIVE_DEFAULTS)

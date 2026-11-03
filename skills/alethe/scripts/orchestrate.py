@@ -4379,7 +4379,7 @@ def passive_usage(
     previous = check.get("quotaState", {})
     current = {}
     transition = False
-    for provider in ("codex", "claude"):
+    for provider in passive_quota_providers(usage):
         for name, window in usage["providers"][provider]["windows"].items():
             key = provider + "/" + name
             flags = {"low": window["low"] and not window["stale"],
@@ -4397,9 +4397,21 @@ def passive_usage(
     return usage, bool(transition)
 
 
+PASSIVE_PROVIDER_LABELS = {"codex": "Codex", "claude": "Claude", "agy": "Antigravity"}
+
+
+def passive_quota_providers(usage: Dict[str, Any]) -> List[str]:
+    """Codex and Claude always; Antigravity only once it has a reading, so it adds no noise without it."""
+    providers = ["codex", "claude"]
+    agy = usage["providers"].get("agy")
+    if agy and not agy["missing"]:
+        providers.append("agy")
+    return providers
+
+
 def passive_quota_text(usage: Dict[str, Any], prices: Dict[str, Any], settings: Dict[str, Any]) -> str:
     parts = []
-    for provider in ("codex", "claude"):
+    for provider in passive_quota_providers(usage):
         windows = usage["providers"][provider]["windows"]
         labels = []
         available = []
@@ -4413,10 +4425,12 @@ def passive_quota_text(usage: Dict[str, Any], prices: Dict[str, Any], settings: 
                 label += stamp.astimezone().strftime(" (resets %H:%M)" if name == "5h" else " (resets %a %b %d %H:%M)")
             labels.append(label)
             available.append(known and not window["low"] and not window["blocked"])
-        text = provider.capitalize() + " " + ", ".join(labels)
-        if provider == "codex" and all(available):
-            if prices["billing"].get("codex", "subscription") == "subscription" and settings["prefer"][0] == "codex":
-                text += ": room to spare, hand it bounded units"
+        text = PASSIVE_PROVIDER_LABELS.get(provider, provider) + " " + ", ".join(labels)
+        # Spare room is worth spending only on a subscription worker the user prefers; the lead's own
+        # Claude is never "spare", and an API-billed provider costs money per token.
+        if (provider != "claude" and provider in settings["prefer"] and all(available)
+                and prices["billing"].get(provider, "subscription") == "subscription"):
+            text += ": room to spare, hand it bounded units"
         if usage["providers"][provider]["blocked"] and not usage["providers"][provider]["stale"]:
             text += ": blocked, ask before using"
         elif usage["providers"][provider]["low"] and not usage["providers"][provider]["stale"]:
