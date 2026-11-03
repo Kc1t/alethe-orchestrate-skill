@@ -36,7 +36,7 @@ the next plan. The page is one offline file and reads the YAML itself, so it nee
 | `quota.stopAt` | Percent at which `run` refuses a wave and skips queued workers on that provider; at least `criticalThreshold`, 95 by default |
 | `quota.whenLow` | `switch-provider` runs a role on the next provider in the order at the same tier; `keep` stays |
 | `quota.onBothCritical` | `ask`, `run-cheapest` or `block` when every provider in the order is low |
-| `quota.whenSpare` | What to do with a provider's spare quota: `spend-strong` runs workers on its strong tier, `prefer` runs them on it at their own tier, `ignore` changes nothing |
+| `quota.whenSpare` | Only for subscription billing (`billing` defaults to `subscription`), never API billing: what to do with spare quota: `spend-strong` runs workers on its strong tier, `prefer` runs them on it at their own tier, `ignore` changes nothing |
 | `quota.spareWithinHours` | A weekly or monthly cycle that resets within this many hours counts as spare |
 | `quota.spareMinLeft` | Percent of that cycle that must be left for it to count as spare |
 | `quota.planEnds` | Dates a plan ends without renewing, by provider, for example `{ codex: "2026-10-20" }` |
@@ -144,9 +144,11 @@ For each worker:
    Never lower a tier to dodge a low provider; ask the user instead.
 4. If every provider is low, follow `quota.onBothCritical`. If the `dry-run` forecast passes
    `quota.stopAt`, ask the user whatever `onBothCritical` says.
-5. Apply `quota.whenSpare` when unused quota would be lost, under every goal, profile and runner
-   strategy. Goal `save` is not required. Keep budget limits and user provider pins; when
-   several providers have spare quota, prefer the one that loses it first.
+5. Apply `quota.whenSpare` only to subscription-billed providers when unused quota would be lost,
+   under every goal, profile and runner strategy. Check `billing` in `alethe-prices.json` (default
+   `subscription`); API billing has no expiring quota and never triggers this rule. Keep the default
+   `spend-strong`. Goal `save` is not required. Keep budget limits and user provider pins; when
+   several subscription providers have spare quota, prefer the one that loses it first.
 
 Change the plan before launching; these are lead decisions, not automatic live quota routing by
 the runner. The runner only enforces `quota.stopAt`: it refuses a wave on a provider at or past it
@@ -214,7 +216,7 @@ negate it. `<provider>` is any provider id and `<window>` one of its windows abo
 | `all-low` | Every provider in the order is low; `both-low` means the same |
 | `<provider>-above:<n>` | The busiest main window in a fresh reading is past n percent |
 | `<provider>-<window>-above:<n>` | That window in a fresh reading is past n percent, for example `claude-opus-above:50` or `codex-week-above:80` |
-| `<provider>-spare` | That provider has spare quota |
+| `<provider>-spare` | That subscription-billed provider has fresh spare quota; false for API billing |
 | `budget-low` | More than `budget.warnAt` percent of the plan budget is spent |
 | `price-above:<usd>` | The model the unit would run on, from the phase's tier, provider and model before this rule, lists an input price above `<usd>` US dollars per 1M tokens in the price table, for example `price-above:5` or `price-above:2.5`. A model with no known price, including the CLI's default when none is pinned, cannot establish it |
 | `spent-above:<usd>` | This orchestration's reported spend so far, as `status` and `report` total it, is above `<usd>` US dollars. Only cost the CLIs reported counts; nothing is estimated |
@@ -229,7 +231,8 @@ In skill-only mode Claude and Codex quota conditions use fresh `usage` readings.
 windows apply only when reported. For Antigravity and Kimi, quota conditions still need Alethe or
 the user; for other providers, ask the user. A stale or absent reading cannot establish an
 `above` or `spare` condition. `conserveProviders` and explicit user warnings still establish low.
-Spare quota also needs a reset time; a non-renewing plan end comes from `quota.planEnds` or the
+Spare quota requires subscription billing (`billing` defaults to `subscription`), never API billing,
+and also needs a reset time; a non-renewing plan end comes from `quota.planEnds` or the
 user. Ignore a `planEnds` date that has passed. Task, check and report conditions are judged by
 the lead from evidence; budget conditions, `spent-above` among them, use the plan's recorded spend.
 `price-above` reads the price table `models` shows: the bundled `prices.json` overlaid by

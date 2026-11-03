@@ -3,7 +3,7 @@ name: alethe
 description: Orchestrate bounded Codex, Claude Code, Agy, Kimi, or custom CLI workers to finish work with the least lead context and provider usage, following playbooks such as plan big, execute small. Use when the user asks to orchestrate, delegate, compare agents, conserve agent tokens or quota, recover a worker, report what an orchestration did and cost, or work without MCP or Python, when the user types /alethe or a short command such as "alethe report" or "alethe stop", and when they want it on from now on, at any point of a task and alongside other skills. Also use it proactively, without being asked, when a request is large enough to split into bounded independent units, such as a multi-file refactor, a migration, an audit or research across many files. Default passive mode watches session spend and quota and delegates cheaper bounded units; spend reports the lead session. Keep small work with the lead.
 argument-hint: "[task or standing instruction] | on | off | passive | spend | save | max | freestyle | careful | report | status | usage | models | editor | list | stop | skip <phase> | switch <playbook> | freeform | budget <limit> | mark <worker> <used|partial|discarded> | setup | help"
 metadata:
-  version: "22"
+  version: "23"
 ---
 
 # Orchestrate CLI workers
@@ -96,19 +96,22 @@ action. Run-specific commands without a folder use the current orchestration: th
 
 Work as usual, with no playbook, plan or waves unless the user asks. Passive mode watches this
 lead session's own spend and provider quota, and delegates only when a short brief and a bounded
-unit make a worker cheaper than the lead. Without asking, hand off read-only scouting or search
-across many files, mechanical edits with an automatic check, writing or running tests, or an
-independent review of a finished diff. Keep small steps, ambiguous or design work, tightly coupled
-edits and integration with the lead. The playbook workflow below applies when explicitly requested.
+unit make a worker cheaper than the lead. Without asking, use only subscription-billed workers
+with fresh quota room; `billing` in `alethe-prices.json` defaults to `subscription`. Any API-billed
+provider or unknown/stale quota needs the user's ok first, including for the agent's own subagents.
+Eligible units are read-only scouting or search across many files, mechanical edits with an
+automatic check, writing or running tests, or an independent review of a finished diff. Keep
+small steps, ambiguous or design work, tightly coupled edits and integration with the lead. The playbook workflow below applies when explicitly requested.
 
 Prefer Codex while both its 5h and week windows are known, fresh and below
 `quota.criticalThreshold`: its subscription quota left at reset is lost. Honor `billing` in
-`alethe-prices.json` and `passive.prefer`; API billing needs a price comparison rather than a
-subscription assumption. Run each bounded Codex unit as a one-worker `economy` wave through
-`new`, `run --detach`, and `wait`, pinning model and effort. When Codex is low or the unit needs
+`alethe-prices.json` and `passive.prefer`; compare API prices and ask before using that provider,
+even if its rate-limit windows have room. Run each bounded Codex unit as a one-worker `economy`
+wave through `new`, `run --detach`, and `wait`, pinning model and effort. When Codex is low or the unit needs
 this conversation's context, use the agent's own cheaper subagents instead: in Claude Code,
 the Agent tool with `model: haiku` or `sonnet`, and a pinned effort where supported. Unknown
-quota is not evidence of spare room; check before routing, without refreshing Claude from a hook.
+quota is not evidence of spare room; ask before routing on unknown/stale readings, without
+refreshing Claude from a hook. Cheaper subagents must meet the same billing and quota conditions.
 
 Say it in one line when delegating, without confirmation: "Handing the test sweep to Codex
 (5h at 4%) to save Opus." Ask first before more than `passive.askAboveWorkers` (default 2)
@@ -128,9 +131,16 @@ See [references/playbooks.md](references/playbooks.md) for the optional `passive
 ## Stay on
 
 1. Use it proactively whenever a request splits into bounded independent units, even when nobody
-   mentions orchestration, as the description says. Small or tightly coupled work stays with you.
-2. `mode on --everywhere` makes it the default in every project, with no expiry. `mode off` in a
-   project turns it off there only, and `mode off --everywhere` also disables passive by default.
+   mentions orchestration, as the description says. Before an unrequested multi-wave or multi-worker
+   orchestration, show a few lines of `dry-run` (playbook, workers, providers/models, estimate,
+   quota) and wait for an ok. This also applies under `balanced`, `save` and `max`; turning on a
+   goal alone is not approval. Exempt are passive one-worker delegations to subscription workers
+   with fresh room within `passive.askAboveWorkers`, explicitly requested orchestrations, and
+   standing instructions that say to go ahead. Small or tightly coupled work stays with you.
+2. `mode on --everywhere` applies in every project for 30 days from the last time it was set;
+   calling it again renews it, and `mode show` reports `expiresAt`. After expiry the built-in
+   passive default applies again. Passive itself does not expire. `mode off` turns it off here;
+   `mode off --everywhere` disables the passive default everywhere, as does `ALETHE_PASSIVE=0`.
 3. `mode on` keeps it on for the current project (the repository root, or the folder) until
    `mode off`, or after 12 hours without a prompt. A project mode wins over the default.
 
@@ -204,7 +214,9 @@ every wave:
 3. If a provider is low (at or above `quota.criticalThreshold`) and the next provider in the order
    runs the same tier, move the work and tell the user in one line with the numbers and reset
    time: "Moving the scouts to Codex: your Claude is at 86% of its 5-hour window (resets 14:30),
-   Codex is at 33%." Spend quota that would be lost per `quota.whenSpare`.
+   Codex is at 33%." Apply `quota.whenSpare` only to subscription-billed providers whose unused
+   quota would be lost, honoring `billing` in `alethe-prices.json` (default `subscription`).
+   Keep the default `spend-strong`; it never applies to API billing, which has no expiring quota.
 4. Stop and ask before launching when the only way around a low provider lowers the tier the work
    needs, every provider is low, or the forecast passes `quota.stopAt`. Say what the work needs,
    what is left and when it resets, then offer two to four options with a recommendation, using
@@ -275,6 +287,12 @@ does. Stop a wave that is no longer useful with `stop`; workers that already ran
    Preview with `dry-run`: runner strategy, providers, concurrency, prompt tokens, budget and
    `listPriceEstimateUsd` (an estimate) and `quotaForecast`. Fix warnings, including default
    models, low providers and the stop line, or explain why they do not apply.
+   Before the first wave of an unrequested multi-wave or multi-worker orchestration, show that
+   preview in a few lines: playbook, worker count, providers/models, estimate and quota. Wait for
+   an ok, including under `balanced`/`save`/`max`. Exempt are passive one-worker delegations to
+   fresh-room subscription providers within `passive.askAboveWorkers`, explicit orchestration
+   requests, and standing instructions that say to go ahead. Never treat a mode goal alone as
+   that permission; passive API billing or unknown/stale quota still needs approval.
    When the user wants to see the architecture, save the preview with `dry-run --write`, then
    render it with `scripts/diagram.py` as described in [references/diagram.md](references/diagram.md).
    Show the SVG before running workers and use only confirmed proxy routes.

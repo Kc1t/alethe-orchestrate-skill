@@ -45,6 +45,7 @@ NOTE_KINDS = {"change": "Changed", "skip": "Skipped", "add": "Added", "switch": 
 MODES_FILE = "modes.json"
 MODE_IDLE_SECONDS = 12 * 3600
 MODE_REFRESH_SECONDS = 600
+MODE_EVERYWHERE_DAYS = 30
 MAX_MODE_RULES = 8
 MODE_GOALS = {
     "passive": "watch the session's own spend and quota, and hand bounded units to cheaper workers, Codex first while its subscription has room, without a playbook",
@@ -4187,21 +4188,75 @@ def mode_scope(cwd: Path) -> Path:
     return checkout_root(cwd) or cwd
 
 
+def mode_rule(value: Any) -> Optional[str]:
+    if not isinstance(value, str) or len(value) > NOTE_LIMITS["note"]:
+        return None
+    text = "".join(char for char in value if ord(char) >= 32 and not 127 <= ord(char) <= 159).strip()
+    return text if text and len(text) <= NOTE_LIMITS["note"] else None
+
+
+def mode_date(value: Any) -> Optional[dt.datetime]:
+    if isinstance(value, str):
+        try:
+            stamp = timestamp(value)
+            return stamp.astimezone(dt.timezone.utc) if stamp is not None else None
+        except (ValueError, OverflowError, OSError):
+            pass
+    return None
+
+
+def sanitized_mode(raw: Dict[str, Any], now: float) -> Dict[str, Any]:
+    goal, care = raw.get("goal"), raw.get("care")
+    since = mode_date(raw.get("since"))
+    mode = {
+        "goal": goal if isinstance(goal, str) and goal in MODE_GOALS else "balanced",
+        "care": care if isinstance(care, str) and care in ("normal", "careful") else "normal",
+        "since": (since or timestamp(now)).astimezone(dt.timezone.utc).isoformat(),
+        "rules": [],
+    }
+    rules = raw.get("rules")
+    for value in rules if isinstance(rules, list) else []:
+        rule = mode_rule(value)
+        if rule and rule not in mode["rules"]:
+            mode["rules"].append(rule)
+            if len(mode["rules"]) == MAX_MODE_RULES:
+                break
+    seen = number(raw.get("seenAt"))
+    if seen is not None and seen >= 0 and timestamp(seen) is not None:
+        mode["seenAt"] = seen
+    return mode
+
+
 def read_mode_state(now: float) -> Dict[str, Any]:
     raw = read_optional_json(orchestrations_home() / MODES_FILE)
     raw = raw if isinstance(raw, dict) else {}
     modes = raw.get("modes") if isinstance(raw.get("modes"), dict) else {}
     everywhere = raw.get("everywhere")
-    return {
+    clean = {scope: sanitized_mode(mode, now) for scope, mode in modes.items() if isinstance(mode, dict)}
+    off_in = raw.get("offIn")
+    state = {
         "modes": {
             scope: mode
-            for scope, mode in modes.items()
-            if isinstance(mode, dict) and now - float(number(mode.get("seenAt")) or 0) < MODE_IDLE_SECONDS
+            for scope, mode in clean.items()
+            if "seenAt" in mode and now - mode["seenAt"] < MODE_IDLE_SECONDS
         },
-        "everywhere": everywhere if isinstance(everywhere, dict) else None,
-        "offIn": [scope for scope in raw.get("offIn") or [] if isinstance(scope, str)],
+        "everywhere": sanitized_mode(everywhere, now) if isinstance(everywhere, dict) else None,
+        "offIn": [scope for scope in off_in if isinstance(scope, str)] if isinstance(off_in, list) else [],
         "passive": raw.get("passive") is not False,
     }
+    if state["everywhere"] is not None:
+        expires = mode_date(everywhere.get("expiresAt"))
+        migrate = expires is None
+        if migrate:
+            since = timestamp(state["everywhere"]["since"])
+            expires = timestamp(since.timestamp() + MODE_EVERYWHERE_DAYS * 86400) or timestamp(now + MODE_EVERYWHERE_DAYS * 86400)
+        state["everywhere"]["expiresAt"] = expires.astimezone(dt.timezone.utc).isoformat()
+        if migrate:
+            # Anchor legacy modes once; a missing date must not renew on every read.
+            save_mode_state(state)
+        if expires <= timestamp(now):
+            state["everywhere"] = None
+    return state
 
 
 def save_mode_state(state: Dict[str, Any]) -> None:
@@ -4238,7 +4293,7 @@ def updated_mode(
         mode["care"] = care
     kept = [] if clear_rules else list(mode.get("rules") or [])
     for rule in rules:
-        text = optional_note(rule, "rule", NOTE_LIMITS["note"])
+        text = mode_rule(optional_note(rule, "rule", NOTE_LIMITS["note"]))
         if text and text not in kept:
             kept.append(text)
     if len(kept) > MAX_MODE_RULES:
@@ -4265,8 +4320,11 @@ def mode_payload(
         elif action == "on":
             state["passive"] = True
             state["everywhere"] = updated_mode(state["everywhere"], goal, care, rules, clear_rules)
+            state["everywhere"]["since"] = timestamp(now).isoformat()
+            state["everywhere"]["expiresAt"] = timestamp(now + MODE_EVERYWHERE_DAYS * 86400).isoformat()
             save_mode_state(state)
-        return {"everywhere": state["everywhere"], "passive": state["passive"]}
+        return {"everywhere": state["everywhere"], "passive": state["passive"],
+                "expiresAt": state["everywhere"].get("expiresAt") if state["everywhere"] is not None else None}
     scope = str(mode_scope(cwd))
     if action == "show":
         found, mode = effective_mode(state, Path(scope))
@@ -4459,7 +4517,8 @@ def passive_brief(settings: Dict[str, Any]) -> str:
         "work and integration. Honor billing/passive.prefer: Codex first with fresh 5h/week below "
         "quota.criticalThreshold; unused subscription quota expires. Use one-worker economy via "
         "new/run --detach/wait; pin model/effort. If low/context-bound, use cheaper Agent haiku/sonnet. "
-        "Announce delegation in one line. "
+        "Announce delegation in one line. Auto-delegate only to fresh-room subscription workers (default billing); "
+        "API/unknown/stale needs approval. "
         f"Ask above {settings['askAboveWorkers']} parallel workers, on low providers, higher cost or past quota.stopAt. "
         "Suggest /model sonnet once as routine spend climbs; user chooses. "
         "/alethe off: project; /alethe off everywhere: all."

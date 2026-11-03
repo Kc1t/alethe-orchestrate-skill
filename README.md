@@ -12,7 +12,7 @@
 
   <p align="center">
     <a href="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml/badge.svg"></a>
-    <a href="./CHANGELOG.md"><img alt="Skill version" src="https://img.shields.io/badge/skill-v22-4f46e5?style=flat-square"></a>
+    <a href="./CHANGELOG.md"><img alt="Skill version" src="https://img.shields.io/badge/skill-v23-4f46e5?style=flat-square"></a>
     <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
     <img alt="Python 3.9+ optional" src="https://img.shields.io/badge/python-3.9%2B%20optional-3776ab?style=flat-square&logo=python&logoColor=white">
     <img alt="Windows, macOS and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555?style=flat-square">
@@ -67,7 +67,8 @@ Or copy `skills/alethe` into `~/.claude/skills/`, `~/.codex/skills/` or
 With the Claude Code plugin hook, Alethe quietly watches the lead session's own spend and local
 provider quota from the first prompt. It hands cheaper, bounded scouting, checked mechanical
 edits, tests and finished-diff reviews to workers without choosing a playbook. Codex comes first
-while its subscription has room; small, ambiguous and coupled work stays with the lead.
+while its subscription has fresh room; API-billed workers or unknown/stale quota need your ok.
+Small, ambiguous and coupled work stays with the lead.
 
 `/alethe spend` shows lead and delegated tokens and a list-price estimate, a subscription
 yardstick rather than a bill. Checks appear every 15 minutes, each $5 step of lead spend, or
@@ -76,6 +77,13 @@ when known quota becomes low, blocked or resets. `/alethe off` disables it here;
 `ALETHE_PASSIVE=0` disables only the default. Tune the optional `passive` block in
 [playbooks](skills/alethe/references/playbooks.md). Manual installs without the hook use
 `mode show`, `spend` and `usage` for checks.
+
+While the Claude Code plugin is installed, its hook runs a small Python script on every prompt
+and after every tool call. It reads the local Claude transcript, Codex session files and Alethe
+state; the hook sends nothing over the network. `/alethe off` disables it in this project;
+`/alethe off everywhere` disables the default everywhere, and `ALETHE_PASSIVE=0` disables the
+implicit default. Explicit project modes can still apply; turn them off in those projects too.
+Off modes leave a quick silent hook check; uninstall the plugin to stop the script from running.
 
 ## Commands
 

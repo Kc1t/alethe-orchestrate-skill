@@ -111,8 +111,10 @@ Use this order:
 
 Before every wave, run `usage` for Claude worker-event readings and fresh Codex session-file
 readings. Move an unpinned low-provider plan to the next capable provider in the active order at
-the same tier, resolving its model and effort again; apply `quota.whenSpare` when quota would be
-lost. This applies under every goal, profile and runner strategy. User provider pins and hard
+the same tier, resolving its model and effort again; apply `quota.whenSpare` only to subscription
+quota that would be lost. Honor `billing` in `alethe-prices.json` (default `subscription`): keep
+`spend-strong` as the default, but never apply it to API billing, which has no expiring quota.
+This applies under every goal, profile and runner strategy. User provider pins and hard
 budgets still hold. Never lower a tier to dodge a low provider, and never run into
 `quota.stopAt`: ask the user, with the options in the skill's "Watch the quota" section. Report at most one quota line per wave, disclose stale readings, and record
 changes with `note "<reason and readings>" --kind switch`. See [playbooks.md](playbooks.md) for

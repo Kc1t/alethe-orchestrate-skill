@@ -58,6 +58,13 @@ with the three profiles and the model each tier gets on each CLI. Recommend one 
 these profiles, and which one should be active?" Apply changes and show the table again. Never
 save or start workers before the user approves.
 
+Explain passive mode in two lines:
+"Passive mode is on by default: it watches the lead session's local spend and provider quota.
+It delegates cheaper bounded units to subscription workers with fresh room; API or unknown/stale quota needs your ok."
+Ask: "Keep passive on by default, limit it to this project, or turn it off everywhere?" Skip this
+question only when that choice was already confirmed. Record the answer and save only the
+preferences they approve; declining setup is not consent to change modes.
+
 ## 4. Save
 
 1. Run `playbook --init`, adding `--force` only after the user agreed to replace an existing copy,
@@ -67,11 +74,18 @@ save or start workers before the user approves.
    `doctor` to validate the playbooks copy, then `policy set --provider-order` with the active
    profile's built-in CLIs, or `policy set` with no options when the defaults fit, so `doctor`
    records onboarding as complete. A choice limited to one run stays out of the policy.
-3. Ask once: "Keep orchestration on in every project, so you never have to call it?" On yes,
-   run `mode on --everywhere`. Suggest goal `save` for profile `savings`, goal `max` for profile
-   `aggressive`, or goal `balanced` for profile `base`, and goal `freestyle` when they only want it
-   to watch cost and suggest; the goal controls delegation, independently of the profile's tier
-   models. It can be turned off per project later.
+3. Apply only the passive choice confirmed above:
+   - Keep the built-in default: leave it on; if it was disabled, re-enable it with
+     `mode on --everywhere --goal passive` (the explicit mode lasts 30 days, then the built-in
+     passive default continues).
+   - This project only: `mode off --everywhere`, then `mode on --goal passive` here; the project
+     override expires after 12 hours without a prompt.
+   - Off: `mode off --everywhere`; if `mode show` still reports an explicit project override,
+     also use `mode off` here. Other explicit project overrides are disabled in their projects.
+   Choose `save`, `max`, `balanced` or `freestyle` only when the user separately requests that
+   standing behavior. An explicit everywhere mode lasts 30 days and renews when set again;
+   its goal controls delegation independently of the profile's models. The first-wave approval
+   gate still applies unless their standing instruction explicitly says to go ahead.
 4. Offer a preview diagram of the active profile.
 
 Later, "use savings" or "go aggressive" changes `profile` in the copy; confirm it when it is an

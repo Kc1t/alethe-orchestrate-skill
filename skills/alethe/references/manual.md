@@ -37,8 +37,10 @@ minutes, a one-line Haiku call with `--output-format stream-json --verbose` prin
 Antigravity and Kimi still need Alethe or the user; ask the user for other providers' readings.
 
 Use those readings exactly as the skill's "Watch the quota" section says: move unpinned low
-providers to the next capable provider at the same tier, and apply `quota.whenSpare` when unused
-quota would be lost, under every goal, profile and runner strategy. Tell the user at most one
+providers to the next capable provider at the same tier, and apply `quota.whenSpare` only when
+unused subscription quota would be lost, under every goal, profile and runner strategy. Check
+`billing` in `alethe-prices.json` (default `subscription`); keep the default `spend-strong`, but
+never apply it to API billing, which has no expiring quota. Tell the user at most one
 quota line per wave with the readings and reset time; append the switch and reason to `state.md`.
 Without the runner you enforce the stop line: start no worker on a blocked provider, and check
 again before each queued worker. After each wave, note what each worker took of each window, and

@@ -12,7 +12,7 @@
 
   <p align="center">
     <a href="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml/badge.svg"></a>
-    <a href="./CHANGELOG.md"><img alt="Versão da skill" src="https://img.shields.io/badge/skill-v22-4f46e5?style=flat-square"></a>
+    <a href="./CHANGELOG.md"><img alt="Versão da skill" src="https://img.shields.io/badge/skill-v23-4f46e5?style=flat-square"></a>
     <a href="./LICENSE"><img alt="Licença" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
     <img alt="Python 3.9+ opcional" src="https://img.shields.io/badge/python-3.9%2B%20optional-3776ab?style=flat-square&logo=python&logoColor=white">
     <img alt="Windows, macOS e Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555?style=flat-square">
@@ -68,7 +68,8 @@ Com o hook do plugin no Claude Code, o Alethe acompanha discretamente o gasto da
 e a cota local dos provedores desde o primeiro prompt. Delega buscas, alterações mecânicas com
 checagem automática, testes e revisão de diffs prontos quando um worker sai mais barato, sem
 escolher um playbook. Prioriza o Codex enquanto houver folga na assinatura; passos pequenos,
-trabalho ambíguo e alterações muito ligadas entre si ficam com o líder.
+trabalho ambíguo e alterações muito ligadas entre si ficam com o líder. Workers cobrados por API
+ou com cota desconhecida ou desatualizada precisam do seu ok antes de rodar.
 
 `/alethe spend` mostra os tokens do líder e dos workers e uma estimativa pelo preço de tabela:
 é uma referência para assinantes, não uma cobrança por token. Os avisos aparecem a cada 15 minutos,
@@ -77,6 +78,14 @@ a cada US$ 5 de gasto estimado do líder ou quando uma cota conhecida fica baixa
 `/alethe passive` liga explicitamente. `ALETHE_PASSIVE=0` desliga só o padrão automático.
 Ajuste o bloco opcional `passive` nos [playbooks](skills/alethe/references/playbooks.md).
 Na instalação manual sem hook, use `mode show`, `spend` e `usage` para consultar.
+
+Enquanto o plugin do Claude Code estiver instalado, o hook executa um pequeno script Python
+a cada prompt e depois de cada chamada de ferramenta. Ele lê a transcrição local do Claude, os
+arquivos de sessão do Codex e o estado do Alethe; o hook não envia nada pela rede.
+`/alethe off` desliga neste projeto; `/alethe off everywhere` desliga o padrão em todos, e
+`ALETHE_PASSIVE=0` desliga o padrão automático. Modos explícitos por projeto ainda podem valer;
+desligue-os nesses projetos também. Mesmo desligado, o hook faz uma checagem rápida e silenciosa;
+para impedir a execução do script, desinstale o plugin.
 
 ## Comandos
 

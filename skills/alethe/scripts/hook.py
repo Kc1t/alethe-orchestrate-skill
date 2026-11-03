@@ -53,7 +53,8 @@ def covers(scope: str, cwd: str) -> bool:
 def mode_is_off(state: dict, cwd: str, now: float, post_tool: bool) -> bool:
     modes = state.get("modes") or {}
     matches = [scope for scope, mode in modes.items() if isinstance(mode, dict)
-               and now - float(mode.get("seenAt") or 0) < 12 * 3600 and covers(scope, cwd)]
+               and type(mode.get("seenAt")) in (int, float) and 0 <= mode["seenAt"] < float("inf")
+               and now - mode["seenAt"] < 12 * 3600 and covers(scope, cwd)]
     if matches:
         mode = modes[max(matches, key=len)]
         return post_tool and mode.get("goal") != "passive"
@@ -61,7 +62,16 @@ def mode_is_off(state: dict, cwd: str, now: float, post_tool: bool) -> bool:
         return True
     mode = state.get("everywhere")
     if isinstance(mode, dict) and mode:
-        return post_tool and mode.get("goal") != "passive"
+        import datetime as dt
+
+        expires = mode.get("expiresAt")
+        if not isinstance(expires, str):
+            raise ValueError("legacy mode needs the full reader to persist its expiry")
+        stamp = dt.datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        stamp = stamp.replace(tzinfo=dt.timezone.utc) if stamp.tzinfo is None else stamp
+        stamp = stamp.astimezone(dt.timezone.utc)
+        if stamp.timestamp() > now:
+            return post_tool and mode.get("goal") != "passive"
     return state.get("passive") is False or os.environ.get("ALETHE_PASSIVE") == "0"
 
 
@@ -69,8 +79,11 @@ def skip_hook(event: dict, now: float) -> bool:
     cwd = os.path.realpath(os.path.expanduser(event.get("cwd") or os.getcwd()))
     post_tool = event.get("hook_event_name", "UserPromptSubmit") == "PostToolUse"
     home = orchestrations_home()
-    if mode_is_off(read_state(os.path.join(home, "modes.json")), cwd, now, post_tool):
-        return True
+    try:
+        if mode_is_off(read_state(os.path.join(home, "modes.json")), cwd, now, post_tool):
+            return True
+    except (ValueError, TypeError, AttributeError, OverflowError, OSError):
+        return False  # Migrate legacy expiry or sanitize malformed state in the full reader.
     if not post_tool:
         return False
     transcript = event.get("transcript_path")

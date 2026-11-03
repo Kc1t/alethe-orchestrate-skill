@@ -50,6 +50,145 @@ class PassiveTest(unittest.TestCase):
     def mode(self, action="show", *args):
         return json.loads(self.call("mode", action, "--cwd", self.project, *args))
 
+    def raw_modes(self, data):
+        self.home.mkdir(parents=True, exist_ok=True)
+        (self.home / r.MODES_FILE).write_text(json.dumps(data), encoding="utf-8")
+
+    def test_mode_read_sanitizes_hand_written_project_and_hook_rules(self):
+        bad_rules = ["safe", "a\n\tb\x00\x1b\x7f\x80\x9fc", "x" * (r.NOTE_LIMITS["note"] + 1),
+                     {"rule": "object"}, None, 42, "\n\t\x00", "safe",
+                     *["rule-" + str(i) for i in range(r.MAX_MODE_RULES + 5)]]
+        self.raw_modes({"modes": {str(self.project): {
+            "goal": ["save"], "care": {"care": "careful"}, "rules": bad_rules,
+            "seenAt": self.now, "since": {"invalid": True}, "on": "untrusted field"}}})
+        mode = r.read_mode_state(self.now)["modes"][str(self.project)]
+        self.assertEqual(mode["goal"], "balanced")
+        self.assertEqual(mode["care"], "normal")
+        self.assertEqual(mode["rules"], ["safe", "abc", *["rule-" + str(i) for i in range(6)]])
+        self.assertEqual(r.timestamp(mode["since"]).timestamp(), self.now)
+        self.assertNotIn("on", mode)
+        output = self.hook()
+        self.assertIn("Goal: balanced", output)
+        self.assertIn("User rules: " + "; ".join(mode["rules"]) + ".", output)
+        self.assertNotIn("rule-6", output)
+        self.assertNotIn("x" * 301, output)
+        self.assertEqual(len(output.splitlines()), 1)
+        self.assertFalse(any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in output.rstrip("\n")))
+
+    def test_mode_read_sanitizes_everywhere_and_passive_hook_rules(self):
+        self.raw_modes({"everywhere": {"goal": "passive", "care": "unsafe", "since": "not a date",
+            "seenAt": False, "rules": ["Keep\n\tcalm\x9f", True, "x" * 301, "ok"]}})
+        output = self.hook()
+        self.assertIn("User rules: Keepcalm; ok.", output)
+        self.assertNotIn("Careful:", output)
+        self.assertNotIn("x" * 301, output)
+        mode = r.read_mode_state(self.now)["everywhere"]
+        self.assertNotIn("seenAt", mode)
+        self.assertEqual(mode["care"], "normal")
+        self.assertEqual(mode["rules"], ["Keepcalm", "ok"])
+        self.raw_modes({"everywhere": {"goal": "not-a-goal", "care": ["careful"], "rules": "not a list"}})
+        state = r.read_mode_state(self.now)
+        self.assertEqual(state["everywhere"]["rules"], [])
+        self.assertEqual(state["everywhere"]["goal"], "balanced")
+        self.assertEqual(state["everywhere"]["care"], "normal")
+
+    def test_mode_read_drops_project_modes_with_invalid_seen_at(self):
+        for seen in (None, True, "123", [], {}, float("nan"), float("inf"), -1, 10 ** 100):
+            with self.subTest(seen=seen):
+                self.raw_modes({"modes": {str(self.project): {"goal": "save", "seenAt": seen}}, "offIn": 42})
+                state = r.read_mode_state(self.now)
+                self.assertEqual(state["modes"], {})
+                self.assertEqual(state["offIn"], [])
+                self.assertEqual(r.effective_mode(state, self.project)[0], "default")
+
+    def test_everywhere_expires_at_30_days_and_mode_show_reports_expiry(self):
+        days = r.MODE_EVERYWHERE_DAYS * 86400
+        with mock.patch.object(r.time, "time", return_value=self.now):
+            result = json.loads(self.call("mode", "on", "--everywhere", "--goal", "save"))
+            expiry = result["everywhere"]["expiresAt"]
+            self.assertEqual(result["expiresAt"], expiry)
+            self.assertEqual(r.timestamp(expiry).timestamp(), self.now + days)
+            self.assertEqual(self.mode()["expiresAt"], expiry)
+            self.assertEqual(json.loads(self.call("mode", "show", "--everywhere"))["expiresAt"], expiry)
+        with mock.patch.object(r.time, "time", return_value=self.now + days - 1):
+            self.assertEqual(self.mode()["source"], "everywhere")
+        for elapsed in (days, days + 365 * 86400):
+            with mock.patch.object(r.time, "time", return_value=self.now + elapsed):
+                mode = self.mode()
+                self.assertEqual((mode["source"], mode["goal"]), ("default", "passive"))
+                self.assertNotIn("expiresAt", mode)
+        with mock.patch.object(r.time, "time", return_value=self.now + days), mock.patch.dict(
+            os.environ, {"ALETHE_PASSIVE": "0"}
+        ):
+            self.assertFalse(self.mode()["on"])
+        raw = json.loads((self.home / r.MODES_FILE).read_text())
+        raw["passive"] = False
+        self.raw_modes(raw)
+        state = r.read_mode_state(self.now + days)
+        self.assertIsNone(r.effective_mode(state, self.project)[1])
+
+    def test_everywhere_setting_again_renews_from_now_and_preserves_choices(self):
+        with mock.patch.object(r.time, "time", return_value=self.now):
+            self.call("mode", "on", "--everywhere", "--goal", "max", "--care", "careful", "--rule", "go ahead")
+        renewed_at = self.now + 10 * 86400
+        with mock.patch.object(r.time, "time", return_value=renewed_at):
+            result = json.loads(self.call("mode", "on", "--everywhere"))["everywhere"]
+        self.assertEqual(result["goal"], "max")
+        self.assertEqual(result["care"], "careful")
+        self.assertEqual(result["rules"], ["go ahead"])
+        self.assertEqual(r.timestamp(result["since"]).timestamp(), renewed_at)
+        self.assertEqual(r.timestamp(result["expiresAt"]).timestamp(), renewed_at + 30 * 86400)
+        self.assertIsNotNone(r.read_mode_state(self.now + 30 * 86400)["everywhere"])
+        self.assertIsNone(r.read_mode_state(renewed_at + 30 * 86400)["everywhere"])
+
+    def test_everywhere_legacy_expiry_uses_since_and_is_persisted_once(self):
+        since = dt.datetime.fromtimestamp(self.now - 10 * 86400, dt.timezone.utc).isoformat()
+        self.raw_modes({"everywhere": {"goal": "save", "since": since, "rules": ["stay concise"]}})
+        mode = r.read_mode_state(self.now)["everywhere"]
+        self.assertEqual(r.timestamp(mode["expiresAt"]).timestamp(), self.now + 20 * 86400)
+        stored = (self.home / r.MODES_FILE).read_bytes()
+        self.assertEqual(json.loads(stored)["everywhere"]["expiresAt"], mode["expiresAt"])
+        self.assertEqual(r.read_mode_state(self.now + 86400)["everywhere"]["expiresAt"], mode["expiresAt"])
+        self.assertEqual((self.home / r.MODES_FILE).read_bytes(), stored)
+        self.assertIsNone(r.read_mode_state(self.now + 20 * 86400)["everywhere"])
+        self.raw_modes({"everywhere": {"goal": "save", "since": "2020-01-01T00:00:00Z"}})
+        self.assertIsNone(r.read_mode_state(self.now)["everywhere"])
+
+    def test_everywhere_legacy_invalid_dates_anchor_to_first_read(self):
+        for since in (None, False, 123, [], {}, "bad date", "0001-01-01T00:00:00+01:00"):
+            with self.subTest(since=since):
+                self.raw_modes({"everywhere": {"goal": "save", "since": since, "expiresAt": []}})
+                mode = r.read_mode_state(self.now)["everywhere"]
+                self.assertEqual(r.timestamp(mode["since"]).timestamp(), self.now)
+                self.assertEqual(r.timestamp(mode["expiresAt"]).timestamp(), self.now + 30 * 86400)
+                self.assertEqual(r.read_mode_state(self.now + 86400)["everywhere"]["expiresAt"], mode["expiresAt"])
+                self.assertIsNone(r.read_mode_state(self.now + 31 * 86400)["everywhere"])
+
+    def test_hook_entry_migrates_legacy_everywhere_even_when_tool_check_is_not_due(self):
+        self.hook()
+        self.raw_modes({"everywhere": {"goal": "save", "since": "2026-11-03T12:00:00Z"}})
+        with mock.patch.object(h, "full_hook_output", side_effect=r.hook_output) as full:
+            self.assertEqual(self.entry_hook(), "")
+            full.assert_called_once()
+        self.assertIn("expiresAt", json.loads((self.home / r.MODES_FILE).read_text())["everywhere"])
+
+    def test_hook_entry_ignores_expired_everywhere_and_runs_due_passive_check(self):
+        self.hook()
+        self.raw_modes({"everywhere": {"goal": "save", "since": "2026-10-01T12:00:00Z",
+                                       "expiresAt": "2026-10-31T12:00:00Z"}})
+        self.now += 901
+        with mock.patch.object(h, "full_hook_output", side_effect=r.hook_output):
+            output = json.loads(self.entry_hook())["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("Alethe passive", output)
+
+    def test_mode_write_also_removes_rule_controls(self):
+        result = r.updated_mode(None, "save", "normal", ["a\x00\x1bb\x80c"], False)
+        self.assertEqual(result["rules"], ["abc"])
+        with self.assertRaises(r.PlanError):
+            r.updated_mode(None, None, None, ["x" * 301], False)
+        with self.assertRaises(r.PlanError):
+            r.updated_mode(None, None, None, [str(i) for i in range(9)], False)
+
     def hook(self, event="UserPromptSubmit", session="fixture", **fields):
         payload = {"cwd": str(self.project), "session_id": session,
                    "transcript_path": str(self.transcript), "hook_event_name": event, **fields}

@@ -16,6 +16,26 @@ Added:
 - Two-stage review pattern (`spec-validator` + `quality-reviewer`) and external state resolution
   (`STATE.md` / `PLAN.md` + `note --kind add` after `STATUS: NEEDS_CONTEXT`) in `playbooks.yaml`
   and `references/briefs.md`.
+- The passive quota line shows Antigravity after `usage --refresh-agy` has cached a reading.
+  Spare-room suggestions apply to subscription workers in `passive.prefer`, never the lead's
+  own Claude or API-billed providers (commit `387dcfd`).
+
+Fixed:
+
+- Validate `modes.json` on read as well as write: bound and sanitize rules, validate goal/care
+  and timestamps, and prevent unvalidated rules from reaching hook context (#10).
+- Explicit everywhere modes expire 30 days after being set and renew when set again. Legacy
+  modes gain a persisted expiry; the built-in passive default remains on after expiry (#10).
+
+Changed:
+
+- Passive autonomy requires subscription billing and fresh quota room; API billing or unknown/
+  stale quota needs approval. Unrequested multi-wave or multi-worker orchestrations require a
+  dry-run preview and approval before the first wave, with the documented exceptions (#9).
+- Keep `quota.whenSpare: spend-strong` as the default, restricted to subscription quota; onboarding
+  now asks whether to keep passive, limit it to the project, or turn it off (#9).
+- Both READMEs disclose hook frequency, local files read, no network traffic, and how to disable
+  the behavior or uninstall the hook (#10).
 
 ## 22 (2026-11-03)
 

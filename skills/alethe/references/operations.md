@@ -148,10 +148,16 @@ orchestration on for the repository that holds `--cwd` (or that folder outside g
 up to 8, and `--clear-rules` drops them. `mode show` prints the mode, and `mode off` removes it. A
 mode with no prompt for 12 hours is dropped.
 
-`mode on --everywhere` sets a default that applies in every project and never expires. `mode off`
+`mode on --everywhere` applies in every project for 30 days from the last time it was set.
+`mode show` reports `expiresAt`, and setting the mode again renews it. Legacy everywhere modes
+count from a valid `since`, or from their first read when missing/invalid, then persist the expiry.
+After expiry the built-in passive default applies again; passive itself never expires. `mode off`
 inside a project then turns it off there only (listed under `offIn` in `modes.json`), `mode on`
 there brings it back, and `mode off --everywhere` removes the default and those exceptions. A
 project mode always wins over the default. `mode show` says which one applies, as `source`.
+Rules are validated on both write and read: at most 8 strings of 300 characters, with C0/C1
+controls removed and invalid or overlong entries dropped when reading. Invalid goal/care values
+fall back to `balanced`/`normal`; invalid project `seenAt` values expire that override.
 
 `hook` reads an agent hook's JSON from stdin and prints a one-paragraph reminder of the goal, care
 level and rules when the hook's `cwd` is inside a project with a mode on, and nothing otherwise.
