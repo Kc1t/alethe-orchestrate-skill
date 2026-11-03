@@ -526,14 +526,14 @@ playbooks:
         readOnly: true
         workers: 2
         runner: research
-        does: Check the diff against the repository's rules and conventions; give each reviewer its own focus, such as naming and structure, or tests and error handling.
-        returns: Findings with file:line and the rule each one breaks, plus the checks that passed.
+        does: Two-stage review Stage 1 — check the diff against the spec/plan criteria and repository conventions; give each reviewer its own focus, such as spec compliance (missing, extra or misunderstood requirements) or tests and error handling.
+        returns: Findings with file:line and the spec criterion or rule each one breaks, plus the checks that passed.
       - id: bugs
         role: bug-hunter
         tier: strong
         readOnly: true
         with: conventions
-        does: Look only for real bugs in the diff.
+        does: Two-stage review Stage 2 — adversarial quality review looking only for real bugs, failure scenarios, and weakened tests in the diff.
         returns: Findings with file:line and a failure scenario.
         rules:
           - if: claude-opus-above:80

@@ -33,6 +33,16 @@ The runner appends the worker contract, which ends with a `STATUS:` and a `SUMMA
 `BLOCKED` and `NEEDS_CONTEXT` as a question back: change the context, the tier or the scope before
 sending the unit again, and never resend the same brief to the same model.
 
+## Resolving NEEDS_CONTEXT with an external state file
+
+When a scout or writer stops with `STATUS: NEEDS_CONTEXT`, do not paste a long back-and-forth into
+the next wave's brief. Instead:
+
+1. Record the resolved decision in a small state or spec file in the workspace (such as
+   `.planning/STATE.md` or `PLAN.md`) and point subsequent workers to that path.
+2. Log the plan adjustment with `scripts/orchestrate.py note "<decision added after NEEDS_CONTEXT>" --kind add`.
+3. Launch the next wave referencing the updated state file.
+
 ## Checking a writer's work
 
 - Check the repository, not the worker's report. Its summary and its status are claims.
@@ -56,6 +66,20 @@ Hand the reviewer the task, the worker's `result.md` and its `diff.patch` by pat
 One strong finding is worth more than several weak ones, and a stated rationale never lowers a
 finding's severity. Keep reviewers on the standard tier or above. Cheap models miss real defects
 and defend planted ones, so they only skip trivial diffs.
+
+## Two-stage review (spec compliance + adversarial quality)
+
+A single reviewer asked to check everything at once often approves clean-looking code that missed a
+requirement. For non-trivial diffs, split the review wave into two independent read-only workers
+(using `strategy: research` or `parallel` with `maxConcurrent: 2`, since `quality` allows at most
+1 worker per wave):
+
+1. **Stage 1 (`spec-validator`):** Checks strictly whether every acceptance criterion in the brief
+   or `PLAN.md` / `STATE.md` was implemented without extra or misunderstood scope. Ignores style.
+   Ends with `VERDICT: PASS | FAIL | NOT_PROVEN` and `NOT CHECKED: <criteria or none>`.
+2. **Stage 2 (`quality-reviewer`):** Performs adversarial code quality and bug review on the diff
+   (edge cases, error paths, data loss, race conditions, and weakened tests). Ends with
+   `VERDICT: PASS | FAIL | NOT_PROVEN` and `NOT CHECKED: <criteria or none>`.
 
 ## Adversarial review
 

@@ -173,6 +173,32 @@ class QuotaGuardTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("quota stays unknown", err)
 
+    def test_agy_windows_guard_gemini_argon_and_third_party_models_independently(self):
+        self.reading("agy", 30, extra={
+            "week": {"usedPercent": 20, "resetsAt": (self.now + dt.timedelta(days=2)).isoformat()},
+            "argon": {"usedPercent": 96, "resetsAt": (self.now + dt.timedelta(days=2)).isoformat()},
+            "3p-5h": {"usedPercent": 97, "resetsAt": (self.now + dt.timedelta(hours=2)).isoformat()},
+            "3p-week": {"usedPercent": 40, "resetsAt": (self.now + dt.timedelta(days=2)).isoformat()},
+        })
+        self.assertIsNone(runner.quota_refusal([{"provider": "agy", "model": "gemini-3.8-flash-medium"}], self.policy))
+        self.assertIn("argon window", runner.quota_refusal([{"provider": "agy", "model": "gemini-4-argon-high"}], self.policy))
+        self.assertIn("3p-5h window", runner.quota_refusal([{"provider": "agy", "model": "claude-opus-4-6"}], self.policy))
+        advisory = runner.preview_usage_cost(
+            [{"id": "a", "provider": "agy", "model": "gemini-4-argon-high", "estimatedPromptTokens": 500}],
+            self.policy,
+        )
+        self.assertTrue(any("argon window" in w for w in advisory["warnings"]))
+
+    def test_refresh_agy_reads_quota_buckets_from_usage_json(self):
+        with mock.patch.object(runner, "resolve_executable", return_value=sys.executable), \
+             mock.patch.object(runner, "launch_command", return_value=[sys.executable, str(FAKE), "agy-usage"]):
+            code, out, err = self.call("usage", "--refresh-agy", "--policy", self.policy)
+        self.assertEqual(code, 0, err)
+        agy = json.loads(out)["providers"]["agy"]
+        self.assertEqual(agy["windows"]["5h"]["usedPercent"], 86)
+        self.assertEqual(agy["windows"]["argon"]["usedPercent"], 97)
+        self.assertEqual(agy["windows"]["3p-5h"]["usedPercent"], 48)
+
 
 if __name__ == "__main__":
     unittest.main()

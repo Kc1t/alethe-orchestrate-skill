@@ -80,7 +80,7 @@ action. Run-specific commands without a folder use the current orchestration: th
 | `report [folder]` | `report`, and show its output as is, without a summary of your own |
 | `report html`, or "show the report" | `report --format html`, which writes `report.html` in the folder and opens it; without Python, fill `assets/report.html` as in [references/manual.md](references/manual.md) |
 | `status` | `status`, and show its output as is |
-| `usage` | `usage`, or `usage --refresh-claude` when Claude's reading is missing or stale; show windows, resets and freshness |
+| `usage` | `usage`, `--refresh-claude` when Claude's reading is missing or stale, or `--refresh-agy` when Antigravity's reading is missing or stale; show windows, resets and freshness |
 | `models` | `models`; show model prices, ranks and price freshness |
 | `editor`, or "show the playbooks" | `editor`, which writes the playbooks as a flow page and opens it; without Python, fill `assets/editor.html` as in [references/manual.md](references/manual.md) |
 | `list` | `list`; `use <folder>` makes one of them current again |
@@ -193,8 +193,12 @@ Never let a provider run out, under every goal, profile and runner strategy, ask
 every wave:
 
 1. Run `scripts/orchestrate.py usage`. Codex readings come from its session files, Claude readings
-   from each Claude worker's `rate_limit_event`. When the plan or you use Claude and its reading is
-   missing or stale (>30 minutes), run `usage --refresh-claude`, a one-line Haiku call.
+   from each Claude worker's `rate_limit_event`, and Antigravity (`agy`) readings from `agy -p /usage`.
+   When the plan or you use Claude and its reading is missing or stale (>30 minutes), run
+   `usage --refresh-claude`, a one-line Haiku call. When the plan uses `agy` and its reading is
+   missing or stale (>30 minutes), run `usage --refresh-agy` (zero tokens); it checks `5h` and
+   `week` for Gemini models, plus `argon` for Argon models and `3p-5h`/`3p-week` for third-party
+   Claude/GPT models inside Antigravity.
 2. Read `quotaForecast` in `dry-run`: what the wave may take of each window, learned from past
    waves. With too few samples it is unknown; say so instead of guessing.
 3. If a provider is low (at or above `quota.criticalThreshold`) and the next provider in the order

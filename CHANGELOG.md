@@ -3,6 +3,20 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## 23 (2026-11-03)
+
+Added:
+
+- Native Antigravity (`agy`) quota reading and guarding: `usage --refresh-agy` runs
+  `agy -p /usage --output-format json` (zero tokens) and caches the `5h`, `week`, `argon`, `3p-5h`
+  and `3p-week` windows. `run` and `dry-run` now guard `agy` workers by model family (`5h`/`week`
+  for Gemini Flash, plus `argon` for Argon models, or `3p-5h`/`3p-week` for third-party Claude/GPT
+  models inside Antigravity) and warn on model-specific low windows even when `5h`/`week` are not
+  low.
+- Two-stage review pattern (`spec-validator` + `quality-reviewer`) and external state resolution
+  (`STATE.md` / `PLAN.md` + `note --kind add` after `STATUS: NEEDS_CONTEXT`) in `playbooks.yaml`
+  and `references/briefs.md`.
+
 ## 22 (2026-11-03)
 
 Added:
