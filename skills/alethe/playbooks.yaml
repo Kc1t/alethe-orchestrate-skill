@@ -43,6 +43,12 @@ quota:
   spareMinLeft: 30
   planEnds: {}
 
+passive:
+  checkEveryMinutes: 15
+  spendStepUsd: 5
+  prefer: [codex, claude]
+  askAboveWorkers: 2
+
 budget:
   warnAt: 80
   whenLow: finish-and-report

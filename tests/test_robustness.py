@@ -171,10 +171,10 @@ class RobustnessTest(unittest.TestCase):
 
     def test_plain_run_dir_becomes_current(self):
         _, _, run = self.run_plan()
-        self.assertEqual(r.current_folder(), run)
+        self.assertEqual(r.current_folder().resolve(), run.resolve())
         folder = Path(json.loads(self.call("new", "fixture")[1])["folder"])
         self.call("run", self.plan(), "--run-dir", folder / "01-test", "--policy", self.policy)
-        self.assertEqual(r.current_folder(), folder)
+        self.assertEqual(r.current_folder().resolve(), folder.resolve())
 
     def test_stop_after_admission_prevents_launch(self):
         run = self.root / "run"

@@ -12,7 +12,7 @@
 
   <p align="center">
     <a href="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml/badge.svg"></a>
-    <a href="./CHANGELOG.md"><img alt="Versão da skill" src="https://img.shields.io/badge/skill-v21-4f46e5?style=flat-square"></a>
+    <a href="./CHANGELOG.md"><img alt="Versão da skill" src="https://img.shields.io/badge/skill-v22-4f46e5?style=flat-square"></a>
     <a href="./LICENSE"><img alt="Licença" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
     <img alt="Python 3.9+ opcional" src="https://img.shields.io/badge/python-3.9%2B%20optional-3776ab?style=flat-square&logo=python&logoColor=white">
     <img alt="Windows, macOS e Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555?style=flat-square">
@@ -62,6 +62,22 @@ Ou copie `skills/alethe` para `~/.claude/skills/`, `~/.codex/skills/` ou
   </picture>
 </p>
 
+## Modo passive (padrão)
+
+Com o hook do plugin no Claude Code, o Alethe acompanha discretamente o gasto da sessão do líder
+e a cota local dos provedores desde o primeiro prompt. Delega buscas, alterações mecânicas com
+checagem automática, testes e revisão de diffs prontos quando um worker sai mais barato, sem
+escolher um playbook. Prioriza o Codex enquanto houver folga na assinatura; passos pequenos,
+trabalho ambíguo e alterações muito ligadas entre si ficam com o líder.
+
+`/alethe spend` mostra os tokens do líder e dos workers e uma estimativa pelo preço de tabela:
+é uma referência para assinantes, não uma cobrança por token. Os avisos aparecem a cada 15 minutos,
+a cada US$ 5 de gasto estimado do líder ou quando uma cota conhecida fica baixa, bloqueia ou renova.
+`/alethe off` desliga neste projeto; `/alethe off everywhere`, em todos.
+`/alethe passive` liga explicitamente. `ALETHE_PASSIVE=0` desliga só o padrão automático.
+Ajuste o bloco opcional `passive` nos [playbooks](skills/alethe/references/playbooks.md).
+Na instalação manual sem hook, use `mode show`, `spend` e `usage` para consultar.
+
 ## Comandos
 
 Digite depois de `/alethe`.
@@ -71,6 +87,8 @@ Digite depois de `/alethe`.
 | `setup` | Confere suas CLIs e configura tudo |
 | `<tarefa>` | Orquestra a tarefa |
 | `always` | Deixa ligado em todo projeto |
+| `passive` | Acompanha o gasto da sessão e delega tarefas delimitadas mais baratas, sem playbook |
+| `spend` | Mostra tokens do líder e dos workers e estimativas pelo preço de tabela |
 | `freestyle` | Trabalha normal, só cuida do custo e sugere modelos mais baratos |
 | `status` | Onde está |
 | `stop` | Para os workers |

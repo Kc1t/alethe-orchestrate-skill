@@ -42,11 +42,33 @@ the next plan. The page is one offline file and reads the YAML itself, so it nee
 | `quota.planEnds` | Dates a plan ends without renewing, by provider, for example `{ codex: "2026-10-20" }` |
 | `budget.warnAt` | Percent of the plan budget that counts as low |
 | `budget.whenLow` | `finish-and-report`, `downgrade-tier` or `stop` |
+| `passive` | Optional passive-mode checks and routing preferences; defaults below |
 | `profile` | The active profile |
 | `profiles` | Named sets of overrides, usually `base`, `savings` and `aggressive` |
 | `pickOrder` | Which playbook to pick for which kind of task, checked top to bottom |
 | `playbooks` | The playbooks, by id |
 | `routing` | Optional; maps one delegation's kind and effort to a role, exported by the UI |
+
+## Passive settings
+
+`passive` is optional and independent of the active profile. Missing fields use these defaults:
+
+```yaml
+passive:
+  checkEveryMinutes: 15
+  spendStepUsd: 5
+  prefer: [codex, claude]
+  askAboveWorkers: 2
+```
+
+`checkEveryMinutes` and `spendStepUsd` must be positive finite numbers. A check is due after
+that many minutes since the last printed check, when the lead's list-price estimate crosses a
+new spend step, or when a known provider becomes low/blocked or resets. `prefer` is a nonempty
+ordered list of distinct configured provider ids; honor billing and quota before routing.
+`askAboveWorkers` is a positive integer: ask before exceeding it with parallel workers.
+The hook reads local quota only, labels stale or missing readings unknown, and scans Codex
+sessions on due checks. A change to the last known Codex file can signal a quota transition
+between checks; new session files are discovered at the next due scan.
 
 ## Providers
 

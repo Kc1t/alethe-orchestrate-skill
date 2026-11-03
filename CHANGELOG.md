@@ -3,6 +3,29 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## 22 (2026-11-03)
+
+Added:
+
+- Default goal `passive`: watch the lead session's spend and local quota, hand cheaper bounded
+  units to workers without a playbook, preferring spare Codex subscription quota. `/alethe
+  passive` enables it explicitly; project/everywhere off and `ALETHE_PASSIVE=0` control the default.
+- `spend` reads Claude Code transcripts with incremental caching, deduplicates responses and
+  separates lead/delegated tokens and list-price estimates. Unknown model prices stay unknown.
+- Quiet session hooks: a first-prompt brief, then time/spend/quota checks, including JSON context
+  on `PostToolUse`. Optional `passive` playbooks settings tune checks and routing preferences.
+  `mode show` and `doctor` explain the active mode; workers receive no hook output. The small
+  `hook.py` entry point skips tool checks before importing the runner until the cached interval
+  expires; prompt checks still detect spend and quota changes immediately.
+
+Fixed:
+
+- Current orchestration pointers are isolated by `CLAUDE_CODE_SESSION_ID` or `ALETHE_SESSION`,
+  with no fallback to another session's global pointer; sessions without an id keep `current.json`.
+- `spend` prefers the active Claude session transcript before the newest file, and the passive
+  brief names the alethe skill and the runner's absolute command path.
+- The macOS current-folder test compares resolved paths across `/var` and `/private/var` aliases.
+
 ## 21 (2026-10-31)
 
 Added:

@@ -15,6 +15,7 @@ python scripts/orchestrate.py policy show
 python scripts/orchestrate.py playbook --pick
 python scripts/orchestrate.py playbook scout-then-build
 python scripts/orchestrate.py usage
+python scripts/orchestrate.py spend [--transcript PATH] [--session ID] [--json]
 python scripts/orchestrate.py models
 python scripts/orchestrate.py scaffold research --workers 3 --cwd .
 python scripts/orchestrate.py validate <plan.json>
@@ -55,6 +56,31 @@ with briefs so short that each worker's startup costs more than the work, Kimi r
 brief that mentions MCP while servers are off, and a writer in a checkout that already has
 uncommitted changes. `dry-run` also warns per worker on a low provider. Fix warnings or say why
 they do not apply. An effort alone does not pin a model; default-model warnings still apply.
+
+## Lead session spend
+
+`spend` reads Claude Code transcripts locally from `$CLAUDE_CONFIG_DIR/projects/<cwd-slug>`
+(default config: `~/.claude`); the slug replaces each non-alphanumeric character in the absolute
+cwd with `-`. Without flags it first tries `<CLAUDE_CODE_SESSION_ID>.jsonl` when set, falling
+back to the latest modified `*.jsonl` if absent or missing. `--session ID` selects that session
+in the same folder; `--transcript PATH` selects a file directly. `--json` exposes
+per-model and total input, output, cache-read and cache-write tokens, cache-read share of input,
+response counts, first/last timestamps, and USD list-price estimates for lead and delegated work.
+Sidechain responses and `<session>/subagents/*.jsonl` are delegated. Response ids are deduplicated
+across files; malformed complete lines are skipped and unfinished lines retried. Unknown model
+prices stay unknown. Subscription estimates are a yardstick, not a per-token bill.
+
+Incremental totals, response ids and hook throttles live under `orchestrations/passive/`
+(`ALETHE_ORCHESTRATE_HOME` overrides the parent). Appends read only new complete lines;
+truncation, replacement or a changed boundary rebuild totals. Original transcripts stay read-only.
+Delete a session's cache to force a full recount and a new first-prompt brief. Hooks stay silent
+on errors and in workers; explicit non-passive reminders remain prompt-only. Both plugin hooks
+start through the small, stdlib-only `scripts/hook.py` wrapper with `python -S` to skip site
+initialization, importing the runner only when needed. On
+`PostToolUse`, a cached `checkEveryMinutes` interval gates the full check: spend-step and quota
+transitions wait until the timed check is due. `UserPromptSubmit` still checks spend and quota on
+every prompt. A changed interval takes effect after the next full check; `orchestrate.py hook`
+remains available with its original full-check behavior.
 
 ## Quota and model prices
 
@@ -108,6 +134,7 @@ folder is given. The current one is the folder `new` created, the one `use <fold
 the last folder a `run` wrote to: the parent of `--run-dir`, or the run itself when the runner
 picked a temporary directory. `list` shows recent orchestrations with their waves and spend, and
 marks the current one with `*`.
+`CLAUDE_CODE_SESSION_ID` (or `ALETHE_SESSION` when absent) uses `current/<safe-session>.json` with no global fallback; `use` selects that session's pointer, while no id keeps global `current.json`.
 
 `--run-dir <empty-directory>` still works when a fixed location is useful; give each wave its own
 folder inside one parent, such as `<folder>/01-explore` and `<folder>/02-build`. Without either

@@ -110,6 +110,7 @@ class PlaybookSettingsTest(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, {
             "ALETHE_ORCHESTRATE_POLICY": str(self.policy),
             "ALETHE_ORCHESTRATE_PLAYBOOKS": str(self.playbooks),
+            "ALETHE_ORCHESTRATE_HOME": str(self.root / "orchestrations"),
         })
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -252,7 +253,8 @@ class PlaybookSettingsTest(unittest.TestCase):
             "cheap": {"claude": {"model": "legacy"}},
         }}), encoding="utf-8")
         with mock.patch.object(runner, "probe_provider", side_effect=lambda p: {"provider": p, "installed": False}):
-            code, output, errors = self.call("doctor", "--policy", self.policy)
+            with mock.patch.object(runner, "mode_scope", return_value=self.root.resolve()):
+                code, output, errors = self.call("doctor", "--policy", self.policy)
         self.assertEqual(code, 0, errors)
         payload = json.loads(output)
         self.assertFalse(payload["playbooks"]["valid"])

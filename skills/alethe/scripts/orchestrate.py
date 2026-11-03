@@ -47,11 +47,13 @@ MODE_IDLE_SECONDS = 12 * 3600
 MODE_REFRESH_SECONDS = 600
 MAX_MODE_RULES = 8
 MODE_GOALS = {
+    "passive": "watch the session's own spend and quota, and hand bounded units to cheaper workers, Codex first while its subscription has room, without a playbook",
     "save": "spend as little as possible: keep small work with the lead and send bounded units to the cheapest capable tier",
     "balanced": "delegate only when the playbook says it pays, on the tier each unit needs",
     "max": "get the most out of the available agents: parallel waves, strong reviewers and best-of-n on hard calls",
     "freestyle": "watch over cost and quota and suggest cheaper routes, without orchestrating",
 }
+PASSIVE_DEFAULTS = {"checkEveryMinutes": 15, "spendStepUsd": 5, "prefer": ["codex", "claude"], "askAboveWorkers": 2}
 MODE_FREESTYLE = (
     "Work as usual, with no playbook, plan or waves. Check quota before long or heavy steps. When a "
     "cheaper or better route exists, say so in one line, at most once per reply and not again after the user "
@@ -337,7 +339,7 @@ def effective_playbooks_path(policy_path: Path) -> Path:
 PLAYBOOKS_VERSION = 1
 PLAYBOOK_TOP_FIELDS = {
     "version", "goal", "setup", "principles", "providers", "models", "adapters", "routes",
-    "tiers", "quota", "budget", "profile", "profiles", "pickOrder", "playbooks", "routing", "sources",
+    "tiers", "quota", "budget", "profile", "profiles", "pickOrder", "playbooks", "routing", "sources", "passive",
 }
 PLAYBOOK_PHASE_FIELDS = {
     "id", "role", "who", "tier", "provider", "model", "effort", "readOnly", "workers", "isolate",
@@ -709,6 +711,19 @@ def playbook_structure_errors(data: Any) -> List[str]:
         if not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", provider):
             problem(data, "providers", "providers", f"contains invalid provider id {provider!r}")
     tiers(data.get("tiers"), data, "tiers", "tiers")
+    if "passive" in data and mapping(data["passive"], data, "passive", "passive", PASSIVE_DEFAULTS):
+        passive = data["passive"]
+        for field in ("checkEveryMinutes", "spendStepUsd"):
+            if field in passive:
+                value = passive[field]
+                if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                    problem(passive, field, f"passive.{field}", "must be a positive finite number")
+        if "askAboveWorkers" in passive and (type(passive["askAboveWorkers"]) is not int or passive["askAboveWorkers"] < 1):
+            problem(passive, "askAboveWorkers", "passive.askAboveWorkers", "must be a positive integer")
+        if "prefer" in passive and strings(passive["prefer"], passive, "prefer", "passive.prefer"):
+            prefer = passive["prefer"]
+            if not prefer or len(set(prefer)) != len(prefer) or any(provider not in providers for provider in prefer):
+                problem(passive, "prefer", "passive.prefer", "must list distinct configured providers and cannot be empty")
     for field in ("principles", "sources"):
         if field in data:
             strings(data[field], data, field, field)
@@ -846,6 +861,7 @@ def playbook_settings(policy_path: Optional[Path] = None) -> Dict[str, Any]:
     order = profile.get("order", data["providers"])
     data["providers"] = [*order, *(provider for provider in data["providers"] if provider not in order)]
     data["quota"] = {**data.get("quota", {}), **profile.get("quota", {})}
+    data["passive"] = {**copy.deepcopy(PASSIVE_DEFAULTS), **data.get("passive", {})}
     return data
 
 
@@ -1034,13 +1050,14 @@ def codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).expanduser()
 
 
-def codex_quota(thread_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def codex_quota(thread_id: Optional[str] = None, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     try:
-        paths = list((codex_home() / "sessions").glob("*/*/*/rollout-*.jsonl"))
-        if not paths:
-            return None
-        preferred = [path for path in paths if thread_id and thread_id in path.name]
-        path = max(preferred or paths, key=lambda item: item.stat().st_mtime)
+        if path is None:
+            paths = list((codex_home() / "sessions").glob("*/*/*/rollout-*.jsonl"))
+            if not paths:
+                return None
+            preferred = [path for path in paths if thread_id and thread_id in path.name]
+            path = max(preferred or paths, key=lambda item: item.stat().st_mtime)
         stat = path.stat()
         with path.open("rb") as handle:
             offset = max(0, stat.st_size - CODEX_TAIL_BYTES)
@@ -1141,12 +1158,15 @@ def save_quota_samples(policy_path: Path, samples: Sequence[Dict[str, Any]]) -> 
         write_usage_file(policy_path, {**data, "samples": [*data["samples"], *samples][-QUOTA_SAMPLE_LIMIT:]})
 
 
-def usage_payload(policy_path: Path, refresh: bool = True, now: Optional[dt.datetime] = None) -> Dict[str, Any]:
+def usage_payload(
+    policy_path: Path, refresh: bool = True, now: Optional[dt.datetime] = None,
+    readings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     current = now or dt.datetime.now(dt.timezone.utc)
     if refresh:
         save_usage(policy_path, codex_quota())
     threshold, stop = quota_thresholds(policy_path)
-    readings = saved_usage(policy_path)
+    readings = saved_usage(policy_path) if readings is None else readings
     providers = {}
     for provider in BUILTIN_PROVIDERS:
         reading = readings.get(provider, {})
@@ -3667,14 +3687,20 @@ def slugify(text: str, fallback: str) -> str:
     return value or fallback
 
 
-def set_current(folder: Path) -> None:
+def current_pointer_path() -> Path:
+    session = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("ALETHE_SESSION")
     home = orchestrations_home()
-    home.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(home / CURRENT_FILE, {"version": 1, "folder": str(folder), "updatedAt": now_iso()})
+    return home / "current" / session_state_filename(session) if session else home / CURRENT_FILE
+
+
+def set_current(folder: Path) -> None:
+    path = current_pointer_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_json(path, {"version": 1, "folder": str(folder), "updatedAt": now_iso()})
 
 
 def current_folder() -> Optional[Path]:
-    raw = read_optional_json(orchestrations_home() / CURRENT_FILE)
+    raw = read_optional_json(current_pointer_path())
     folder = raw.get("folder") if isinstance(raw, dict) else None
     if not isinstance(folder, str) or not Path(folder).is_dir():
         return None
@@ -3872,6 +3898,219 @@ def render_list(entries: Sequence[Dict[str, Any]]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def claude_project_folder(cwd: Path) -> Path:
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))).expanduser()
+    slug = "".join(char if char.isalnum() else "-" for char in str(cwd.expanduser().resolve()))
+    return config / "projects" / slug
+
+
+def session_transcript(cwd: Path, session: Optional[str] = None) -> Optional[Path]:
+    folder = claude_project_folder(cwd)
+    if session:
+        if Path(session).name != session or "/" in session or "\\" in session:
+            raise PlanError("session must be a session id, not a path")
+        path = folder / (session + ".jsonl")
+        return path if path.is_file() else None
+    return max(folder.glob("*.jsonl"), key=lambda path: path.stat().st_mtime, default=None)
+
+
+def session_state_filename(session: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "-", session)[:80] or "session"
+    digest = hashlib.sha256(session.encode("utf-8")).hexdigest()[:12]
+    return f"{safe}-{digest}.json"
+
+
+def passive_state_path(session: str) -> Path:
+    return orchestrations_home() / "passive" / session_state_filename(session)
+
+
+def token_totals() -> Dict[str, Any]:
+    return {**dict.fromkeys(TOKEN_PARTS, 0), "responses": 0, "firstTimestamp": None, "lastTimestamp": None}
+
+
+def add_token_totals(total: Dict[str, Any], entry: Dict[str, Any]) -> None:
+    for field in (*TOKEN_PARTS, "responses"):
+        total[field] += entry[field]
+    for field, choose in (("firstTimestamp", min), ("lastTimestamp", max)):
+        stamps = [value for value in (total[field], entry[field]) if value is not None]
+        total[field] = choose(stamps) if stamps else None
+
+
+def transcript_anchor(handle: Any, offset: int) -> str:
+    handle.seek(max(0, offset - 256))
+    return hashlib.sha256(handle.read(min(offset, 256))).hexdigest()
+
+
+def update_session_spend(path: Path, state: Dict[str, Any]) -> bool:
+    """Read only appended complete lines. Rebuild all totals if any member was replaced."""
+    path = path.expanduser().resolve()
+    paths = [path, *sorted((path.parent / path.stem / "subagents").glob("*.jsonl"))]
+    statuses = {str(item): item.stat() for item in paths}
+    cache = state.get("spend", {})
+    reset = cache.get("transcript") != str(path) or cache.get("version") != 1
+    files = cache.get("files", {})
+    if set(files) - set(statuses):
+        reset = True
+    for name, status in statuses.items():
+        previous = files.get(name)
+        if not previous:
+            continue
+        identity = [status.st_dev, status.st_ino]
+        if (previous["identity"] != identity or status.st_size < previous["size"] or
+                (status.st_size == previous["size"] and status.st_mtime_ns != previous["mtime"])):
+            reset = True
+        elif status.st_size != previous["size"] or status.st_mtime_ns != previous["mtime"]:
+            with Path(name).open("rb") as handle:
+                if transcript_anchor(handle, previous["offset"]) != previous["anchor"]:
+                    reset = True
+    if reset:
+        cache = {"version": 1, "transcript": str(path), "files": {}, "seen": [],
+                 "lead": {}, "delegated": {}, "delegatedRuns": []}
+    changed = reset
+    seen = set(cache["seen"])
+    runs = set(cache["delegatedRuns"])
+    usage_fields = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens", "output_tokens")
+    for name, status in statuses.items():
+        previous = cache["files"].get(name, {})
+        if previous.get("size") == status.st_size and previous.get("mtime") == status.st_mtime_ns:
+            continue
+        changed = True
+        offset = previous.get("offset", 0)
+        subagent = name != str(path)
+        with Path(name).open("rb") as handle:
+            handle.seek(offset)
+            while handle.tell() < status.st_size:
+                start = handle.tell()
+                line = handle.readline(status.st_size - start)
+                if not line.endswith(b"\n"):
+                    break  # Retry an unfinished line on the next invocation.
+                offset = handle.tell()
+                try:
+                    event = json.loads(line)
+                except (ValueError, UnicodeError):
+                    continue
+                if not isinstance(event, dict) or event.get("type") != "assistant":
+                    continue
+                message = event.get("message")
+                if not isinstance(message, dict) or not isinstance(message.get("usage"), dict):
+                    continue
+                identity = message.get("id") or event.get("requestId") or f"{name}:{start}"
+                if not isinstance(identity, str) or identity in seen:
+                    continue
+                seen.add(identity)
+                delegated = subagent or event.get("isSidechain") is True
+                if delegated:
+                    run_id = Path(name).stem if subagent else str(event.get("agentId") or event.get("sessionId") or "sidechain")
+                    runs.add(run_id.removeprefix("agent-"))
+                model = message.get("model")
+                model = model if isinstance(model, str) and model else "unknown"
+                models = cache["delegated" if delegated else "lead"]
+                total = models.setdefault(model, token_totals())
+                entry = token_totals()
+                for field, raw_field in zip(TOKEN_PARTS, usage_fields):
+                    value = number(message["usage"].get(raw_field))
+                    entry[field] = int(value) if value is not None and math.isfinite(value) and value > 0 else 0
+                entry["responses"] = 1
+                stamp = timestamp(event.get("timestamp"))
+                entry["firstTimestamp"] = entry["lastTimestamp"] = stamp.astimezone(dt.timezone.utc).isoformat() if stamp else None
+                add_token_totals(total, entry)
+            cache["files"][name] = {"offset": offset, "size": status.st_size, "mtime": status.st_mtime_ns,
+                                    "identity": [status.st_dev, status.st_ino], "anchor": transcript_anchor(handle, offset)}
+    cache["seen"] = sorted(seen)
+    cache["delegatedRuns"] = sorted(runs)
+    state["spend"] = cache
+    return changed
+
+
+def transcript_price(model: str, prices: Dict[str, Any]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    models = prices["models"]
+    exact = "claude/" + model.removeprefix("claude/")
+    if exact in models:
+        return exact, models[exact]
+    family = re.fullmatch(r"(?:claude-)?(opus|sonnet|haiku)(?:-\d[\d-]*)?", model)
+    alias = "claude/" + family[1] if family else None
+    return (alias, models[alias]) if alias in models else (None, None)
+
+
+def priced_token_totals(total: Dict[str, Any], price: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    input_total = sum(total[field] for field in TOKEN_PARTS if field != "outputTokens")
+    cost = 0.0 if price is not None else None
+    for field, rate in zip(TOKEN_PARTS, ("input", "cacheRead", "cacheWrite", "output")):
+        if cost is None:
+            break
+        if total[field] and (price is None or rate not in price):
+            cost = None
+            break
+        cost += total[field] * (price or {}).get(rate, 0) / TOKENS_PER_MILLION
+    return {**total, "cacheReadShare": total["cacheReadTokens"] / input_total if input_total else 0,
+            "listPriceEstimateUsd": round(cost, 8) if cost is not None else None}
+
+
+def session_spend_payload(state: Dict[str, Any], policy_path: Path) -> Dict[str, Any]:
+    prices = load_prices(policy_path)
+    cache = state.get("spend", {})
+    result: Dict[str, Any] = {"transcript": cache.get("transcript"), "currency": "USD",
+        "costLabel": "List-price estimate; a subscription yardstick, not a per-token bill",
+        "delegatedRuns": len(cache.get("delegatedRuns", []))}
+    combined: Dict[str, Any] = {}
+    for category in ("lead", "delegated", "total"):
+        raw = cache.get(category, {}) if category != "total" else combined
+        models = {}
+        total = token_totals()
+        costs = []
+        for model, tokens in raw.items():
+            price_key, price = transcript_price(model, prices)
+            entry = {**priced_token_totals(tokens, price), "priceKey": price_key}
+            models[model] = entry
+            add_token_totals(total, tokens)
+            costs.append(entry["listPriceEstimateUsd"])
+            if category != "total":
+                add_token_totals(combined.setdefault(model, token_totals()), tokens)
+        summary = priced_token_totals(total, None)
+        summary["listPriceEstimateUsd"] = round(sum(costs), 8) if all(cost is not None for cost in costs) else None
+        result[category] = {"models": models, "total": summary}
+        if not cache:
+            summary["listPriceEstimateUsd"] = None
+    return result
+
+
+def spend_payload(
+    transcript: Optional[Path] = None, session: Optional[str] = None, cwd: Optional[Path] = None,
+) -> Dict[str, Any]:
+    here = cwd or Path.cwd()
+    path = transcript
+    if path is None and session is None and os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        path = session_transcript(here, os.environ["CLAUDE_CODE_SESSION_ID"])
+    path = path or session_transcript(here, session)
+    if path is None or not path.expanduser().is_file():
+        raise PlanError("no Claude transcript found; pass --transcript PATH or --session ID")
+    cache_path = passive_state_path(session or path.stem)
+    state = read_optional_json(cache_path) or {}
+    if update_session_spend(path, state):
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(cache_path, state)
+    return session_spend_payload(state, default_policy_path())
+
+
+def session_spend_text(payload: Dict[str, Any]) -> str:
+    lines = ["Claude session spend — list-price estimate (subscription yardstick, not a per-token bill)"]
+    for category in ("lead", "delegated"):
+        total = payload[category]["total"]
+        cost = total["listPriceEstimateUsd"]
+        amount = f"~${cost:.2f}" if cost is not None else "cost unknown"
+        lines.append(f"{category.capitalize()}: {amount}, {total['responses']} responses, "
+                     f"{total['cacheReadShare']:.0%} cache reads; " + ", ".join(f"{field}={total[field]:,}" for field in TOKEN_PARTS))
+        for model, entry in payload[category]["models"].items():
+            cost = entry["listPriceEstimateUsd"]
+            lines.append(f"  {model}: " + (f"~${cost:.2f}" if cost is not None else "cost unknown") +
+                         f", {entry['responses']} responses")
+    total = payload["total"]["total"]
+    cost = total["listPriceEstimateUsd"]
+    lines.append("Total: " + (f"~${cost:.2f}" if cost is not None else "cost unknown") +
+                 f"; {payload['delegatedRuns']} delegated runs; {total['firstTimestamp'] or 'unknown'} to {total['lastTimestamp'] or 'unknown'}")
+    return "\n".join(lines) + "\n"
+
+
 def mode_scope(cwd: Path) -> Path:
     cwd = cwd.expanduser().resolve()
     return checkout_root(cwd) or cwd
@@ -3890,6 +4129,7 @@ def read_mode_state(now: float) -> Dict[str, Any]:
         },
         "everywhere": everywhere if isinstance(everywhere, dict) else None,
         "offIn": [scope for scope in raw.get("offIn") or [] if isinstance(scope, str)],
+        "passive": raw.get("passive") is not False,
     }
 
 
@@ -3908,8 +4148,12 @@ def effective_mode(state: Dict[str, Any], here: Path) -> Tuple[Optional[str], Op
     if matches:
         scope = max(matches, key=len)
         return scope, state["modes"][scope]
-    if state["everywhere"] and not any(covers(scope, here) for scope in state["offIn"]):
+    if any(covers(scope, here) for scope in state["offIn"]):
+        return None, None
+    if state["everywhere"]:
         return None, state["everywhere"]
+    if state.get("passive", True) and os.environ.get("ALETHE_PASSIVE") != "0":
+        return "default", {"goal": "passive", "care": "normal", "rules": []}
     return None, None
 
 
@@ -3945,20 +4189,26 @@ def mode_payload(
     state = read_mode_state(now)
     if everywhere:
         if action == "off":
-            state.update(everywhere=None, offIn=[])
+            state.update(everywhere=None, offIn=[], passive=False)
             save_mode_state(state)
         elif action == "on":
+            state["passive"] = True
             state["everywhere"] = updated_mode(state["everywhere"], goal, care, rules, clear_rules)
             save_mode_state(state)
-        return {"everywhere": state["everywhere"]}
+        return {"everywhere": state["everywhere"], "passive": state["passive"]}
     scope = str(mode_scope(cwd))
     if action == "show":
         found, mode = effective_mode(state, Path(scope))
-        source = None if mode is None else "project" if found else "everywhere"
-        return {"scope": scope, "on": mode is not None, "source": source, **(mode or {})}
+        source = "off" if mode is None else "default" if found == "default" else "project" if found else "everywhere"
+        reason = source
+        if mode is None:
+            reason = ("project off" if any(covers(entry, Path(scope)) for entry in state["offIn"]) else
+                      "ALETHE_PASSIVE=0" if os.environ.get("ALETHE_PASSIVE") == "0" else "everywhere off")
+        return {"scope": scope, "on": mode is not None, "source": source, "reason": reason,
+                "passive": mode is not None and mode.get("goal") == "passive", **(mode or {})}
     if action == "off":
         state["modes"].pop(scope, None)
-        if state["everywhere"] and scope not in state["offIn"]:
+        if scope not in state["offIn"]:
             state["offIn"].append(scope)
         save_mode_state(state)
         return {"scope": scope, "on": False}
@@ -4001,20 +4251,183 @@ def hook_stdin() -> str:
 
 
 def hook_output(stdin_text: str) -> str:
+    if os.environ.get(WORKER_ENV_FLAG) == "1":
+        return ""
     try:
         event = json.loads(stdin_text) if stdin_text.strip() else {}
         cwd = Path(event.get("cwd") or os.getcwd()) if isinstance(event, dict) else Path(os.getcwd())
+        event_name = event.get("hook_event_name", "UserPromptSubmit")
+        if event_name not in ("UserPromptSubmit", "PostToolUse"):
+            return ""
         now = time.time()
         state = read_mode_state(now)
         scope, mode = effective_mode(state, cwd.expanduser().resolve())
         if mode is None:
             return ""
-        if scope is not None and now - float(number(mode.get("seenAt")) or 0) > MODE_REFRESH_SECONDS:
+        if scope not in (None, "default") and now - float(number(mode.get("seenAt")) or 0) > MODE_REFRESH_SECONDS:
             mode["seenAt"] = now
             save_mode_state(state)
-        return mode_reminder(mode, scope is None) + "\n"
+        if mode.get("goal") == "passive":
+            return passive_hook(event, cwd, mode, now)
+        return mode_reminder(mode, scope is None) + "\n" if event_name == "UserPromptSubmit" else ""
     except Exception:  # A hook must never block the user's prompt.
         return ""
+
+
+def file_signature(path: Path) -> Optional[List[int]]:
+    try:
+        status = path.stat()
+        return [status.st_mtime_ns, status.st_size, status.st_dev, status.st_ino]
+    except OSError:
+        return None
+
+
+def passive_usage(
+    state: Dict[str, Any], policy_path: Path, now: float, scan: bool,
+) -> Tuple[Dict[str, Any], bool]:
+    """Scan Codex sessions only for a due check; otherwise inspect its last known file."""
+    check = state.setdefault("check", {})
+    reading = check.get("codexReading")
+    source = Path(reading["source"]) if reading and reading.get("source") else None
+    signature = file_signature(source) if source else None
+    usage_signature = file_signature(policy_path.with_name(USAGE_FILE))
+    changed = scan or signature != check.get("codexSignature") or usage_signature != check.get("usageSignature")
+    if scan or (source and signature != check.get("codexSignature")):
+        reading = codex_quota(path=None if scan else source)
+        check["codexReading"] = reading
+        source = Path(reading["source"]) if reading and reading.get("source") else None
+        check["codexSignature"] = file_signature(source) if source else None
+    if changed or "readings" not in check:
+        readings = saved_usage(policy_path)
+        if reading:
+            readings["codex"] = reading
+        check["readings"] = readings
+        check["usageSignature"] = usage_signature
+    usage = usage_payload(policy_path, refresh=False, now=dt.datetime.fromtimestamp(now, dt.timezone.utc),
+                          readings=check["readings"])
+    previous = check.get("quotaState", {})
+    current = {}
+    transition = False
+    for provider in ("codex", "claude"):
+        for name, window in usage["providers"][provider]["windows"].items():
+            key = provider + "/" + name
+            flags = {"low": window["low"] and not window["stale"],
+                     "blocked": window["blocked"] and not window["stale"], "reset": window["reset"],
+                     "resetsAt": window["resetsAt"], "usedPercent": window["usedPercent"]}
+            old = previous.get(key, {})
+            if old:
+                transition |= any(flags[field] and not old.get(field) for field in ("low", "blocked", "reset"))
+                transition |= (flags["resetsAt"] != old.get("resetsAt") and
+                               flags["usedPercent"] < old.get("usedPercent", 0))
+            elif "quotaState" in check:
+                transition |= flags["low"] or flags["blocked"]
+            current[key] = flags
+    check["quotaState"] = current
+    return usage, bool(transition)
+
+
+def passive_quota_text(usage: Dict[str, Any], prices: Dict[str, Any], settings: Dict[str, Any]) -> str:
+    parts = []
+    for provider in ("codex", "claude"):
+        windows = usage["providers"][provider]["windows"]
+        labels = []
+        available = []
+        for name in MAIN_QUOTA_WINDOWS:
+            window = windows.get(name)
+            known = window is not None and not window["stale"] and not window["reset"]
+            label = f"{name} {window['usedPercent']:g}%" if known else f"{name} unknown"
+            stamp = timestamp(window["resetsAt"]) if known else None
+            if stamp:
+                # A short window resets within hours; a longer one needs the date, not only the weekday.
+                label += stamp.astimezone().strftime(" (resets %H:%M)" if name == "5h" else " (resets %a %b %d %H:%M)")
+            labels.append(label)
+            available.append(known and not window["low"] and not window["blocked"])
+        text = provider.capitalize() + " " + ", ".join(labels)
+        if provider == "codex" and all(available):
+            if prices["billing"].get("codex", "subscription") == "subscription" and settings["prefer"][0] == "codex":
+                text += ": room to spare, hand it bounded units"
+        if usage["providers"][provider]["blocked"] and not usage["providers"][provider]["stale"]:
+            text += ": blocked, ask before using"
+        elif usage["providers"][provider]["low"] and not usage["providers"][provider]["stale"]:
+            text += ": low, ask before using"
+        parts.append(text + ".")
+    return " ".join(parts)
+
+
+def passive_spend_line(payload: Dict[str, Any], quota_text: str) -> str:
+    lead = payload["lead"]["total"]
+    if not lead["responses"]:
+        # A new session's transcript has no responses yet: nothing to estimate, so say so plainly.
+        return f"Alethe passive: this session has no lead responses yet, {payload['delegatedRuns']} delegated runs. {quota_text}"
+    cost = lead["listPriceEstimateUsd"]
+    amount = f"~${cost:.2f} list" if cost is not None else "list-price estimate unknown"
+    models = ", ".join(model.removeprefix("claude-") for model in payload["lead"]["models"]) or "model unknown"
+    return (f"Alethe passive: this session {amount} on {models} ({lead['cacheReadShare']:.0%} cache reads), "
+            f"{payload['delegatedRuns']} delegated runs. {quota_text}")
+
+
+def passive_brief(settings: Dict[str, Any]) -> str:
+    return (
+        f"Use the alethe skill; commands: python3 \"{Path(__file__).resolve()}\" <command>. "
+        "Alethe passive: work normally, without a playbook/plan/waves unless asked. Autonomously delegate cheaper "
+        "bounded scouting, checked edits, tests or finished-diff reviews; keep small/ambiguous/design/coupled "
+        "work and integration. Honor billing/passive.prefer: Codex first with fresh 5h/week below "
+        "quota.criticalThreshold; unused subscription quota expires. Use one-worker economy via "
+        "new/run --detach/wait; pin model/effort. If low/context-bound, use cheaper Agent haiku/sonnet. "
+        "Announce delegation in one line. "
+        f"Ask above {settings['askAboveWorkers']} parallel workers, on low providers, higher cost or past quota.stopAt. "
+        "Suggest /model sonnet once as routine spend climbs; user chooses. "
+        "/alethe off: project; /alethe off everywhere: all."
+    )
+
+
+def passive_hook(event: Dict[str, Any], cwd: Path, mode: Dict[str, Any], now: float) -> str:
+    session = event.get("session_id")
+    transcript = Path(event["transcript_path"]).expanduser() if event.get("transcript_path") else None
+    session = str(session or (transcript.stem if transcript else "cwd:" + str(cwd.resolve())))
+    cache_path = passive_state_path(session)
+    state = read_optional_json(cache_path) or {}
+    before = copy.deepcopy(state)
+    settings = playbook_settings()["passive"]
+    check = state.setdefault("check", {})
+    check["checkEveryMinutes"] = settings["checkEveryMinutes"]
+    prompt = event.get("hook_event_name", "UserPromptSubmit") == "UserPromptSubmit"
+    first = prompt and not check.get("briefPrinted")
+    check.setdefault("lastPrinted", now)
+    timed = now - check["lastPrinted"] >= settings["checkEveryMinutes"] * 60
+    if transcript is None:
+        transcript = session_transcript(cwd, event.get("session_id"))
+    if transcript is not None and transcript.is_file():
+        update_session_spend(transcript, state)
+    payload = session_spend_payload(state, default_policy_path())
+    cost = payload["lead"]["total"]["listPriceEstimateUsd"]
+    step = int(cost / settings["spendStepUsd"]) if cost is not None else 0
+    spent = step > check.get("spendStep", step)
+    usage, transition = passive_usage(state, default_policy_path(), now, scan=first or timed or spent)
+    due = first or timed or spent or transition
+    output = ""
+    if due:
+        quota_text = passive_quota_text(usage, load_prices(default_policy_path()), settings)
+        output = passive_spend_line(payload, quota_text)
+        if first:
+            output = passive_brief(settings) + "\n" + output
+            check["briefPrinted"] = True
+        if mode.get("care") == "careful":
+            output += " Careful: " + MODE_CAREFUL + "."
+        rules = [rule for rule in mode.get("rules", []) if isinstance(rule, str)]
+        if rules:
+            output += " User rules: " + "; ".join(rules) + "."
+        check.update(lastPrinted=now, spendStep=step)
+    else:
+        check.setdefault("spendStep", step)
+    if state != before:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(cache_path, state)
+    if not output:
+        return ""
+    if not prompt:
+        return json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": output}}) + "\n"
+    return output + "\n"
 
 
 def task_text(worker: Dict[str, Any]) -> str:
@@ -5298,6 +5711,7 @@ def doctor_payload(policy_path: Path) -> Dict[str, Any]:
     return {
         "usage": usage,
         "usageSummary": usage_summary(usage),
+        "mode": mode_payload("show", Path.cwd(), None, None, [], False),
         "skill": {"version": skill_version(), "path": str(Path(__file__).resolve().parent.parent)},
         "python": {"version": sys.version.split()[0], "ok": python_ok},
         "policyPath": str(policy_path),
@@ -5540,7 +5954,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     mode_parser.add_argument(
         "--everywhere", action="store_true", help="the default for every project; mode off still turns it off in one"
     )
-    subparsers.add_parser("hook", help="print the reminder for an agent hook while a mode is on; never fails")
+    subparsers.add_parser("hook", help="print due passive checks or explicit mode reminders; never fails")
+    spend_parser = subparsers.add_parser("spend", help="estimate lead and delegated Claude transcript spend at list price")
+    spend_parser.add_argument("--transcript", type=Path)
+    spend_parser.add_argument("--session")
+    spend_parser.add_argument("--json", action="store_true")
     budget_parser = subparsers.add_parser(
         "budget", help="show or set the limits for every wave in an orchestration folder"
     )
@@ -5673,7 +6091,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(json.dumps(payload, indent=2, ensure_ascii=False))
             return 0
         if args.command == "hook":
-            print(hook_output(hook_stdin()), end="")
+            try:
+                print(hook_output(hook_stdin()), end="")
+            except Exception:  # Even an unreadable stdin must leave the prompt unblocked.
+                pass
+            return 0
+        if args.command == "spend":
+            payload = spend_payload(args.transcript, args.session)
+            print(json.dumps(payload, indent=2) if args.json else session_spend_text(payload), end="\n" if args.json else "")
             return 0
         if args.command == "stop":
             print(json.dumps(stop_payload(resolve_folder(args.folder)), indent=2))

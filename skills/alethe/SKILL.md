@@ -1,9 +1,9 @@
 ---
 name: alethe
-description: Orchestrate bounded Codex, Claude Code, Agy, Kimi, or custom CLI workers to finish work with the least lead context and provider usage, following playbooks such as plan big, execute small. Use when the user asks to orchestrate, delegate, compare agents, conserve agent tokens or quota, recover a worker, report what an orchestration did and cost, or work without MCP or Python, when the user types /alethe or a short command such as "alethe report" or "alethe stop", and when they want it on from now on, at any point of a task and alongside other skills. Also use it proactively, without being asked, when a request is large enough to split into bounded independent units, such as a multi-file refactor, a migration, an audit or research across many files. Do not use for a small mechanical task unless explicitly requested.
-argument-hint: "[task or standing instruction] | on | off | save | max | freestyle | careful | report | status | usage | models | editor | list | stop | skip <phase> | switch <playbook> | freeform | budget <limit> | mark <worker> <used|partial|discarded> | setup | help"
+description: Orchestrate bounded Codex, Claude Code, Agy, Kimi, or custom CLI workers to finish work with the least lead context and provider usage, following playbooks such as plan big, execute small. Use when the user asks to orchestrate, delegate, compare agents, conserve agent tokens or quota, recover a worker, report what an orchestration did and cost, or work without MCP or Python, when the user types /alethe or a short command such as "alethe report" or "alethe stop", and when they want it on from now on, at any point of a task and alongside other skills. Also use it proactively, without being asked, when a request is large enough to split into bounded independent units, such as a multi-file refactor, a migration, an audit or research across many files. Default passive mode watches session spend and quota and delegates cheaper bounded units; spend reports the lead session. Keep small work with the lead.
+argument-hint: "[task or standing instruction] | on | off | passive | spend | save | max | freestyle | careful | report | status | usage | models | editor | list | stop | skip <phase> | switch <playbook> | freeform | budget <limit> | mark <worker> <used|partial|discarded> | setup | help"
 metadata:
-  version: "21"
+  version: "22"
 ---
 
 # Orchestrate CLI workers
@@ -13,7 +13,7 @@ mix when the user asks. Plan, delegate bounded units, and integrate results supp
 
 - **Playbook** = the phases and roles.
 - **Profile** = which models each tier uses (`base`, `savings`, `aggressive`).
-- **Goal** = how eagerly to delegate while a mode is on (`save`, `balanced`, `max`, `freestyle`).
+- **Goal** = how eagerly to delegate while a mode is on (`passive` by default; `save`, `balanced`, `max`, `freestyle` explicitly).
 - **Runner strategy** = how one wave runs (`economy`, `balanced`, `quality`, `research`, `parallel`, `rescue`).
 
 ## Choose the backend
@@ -73,6 +73,8 @@ action. Run-specific commands without a folder use the current orchestration: th
 | `always`, or "always on", "in every project" | `mode on --everywhere` |
 | `off` | `mode off`; with the default on, this turns it off in this project only |
 | `off everywhere` | `mode off --everywhere` |
+| `passive` | `mode on --goal passive` |
+| `spend [--transcript PATH] [--session ID] [--json]` | `spend` with those options; show its output as is |
 | `save`, `balanced`, `max`, `freestyle` | `mode on --goal <it>` |
 | `careful` | `mode on --care careful` |
 | `report [folder]` | `report`, and show its output as is, without a summary of your own |
@@ -90,12 +92,45 @@ action. Run-specific commands without a folder use the current orchestration: th
 | `setup` | `doctor`, then onboarding when no policy is saved |
 | `help` | list these commands in a few lines |
 
+## Passive mode (default)
+
+Work as usual, with no playbook, plan or waves unless the user asks. Passive mode watches this
+lead session's own spend and provider quota, and delegates only when a short brief and a bounded
+unit make a worker cheaper than the lead. Without asking, hand off read-only scouting or search
+across many files, mechanical edits with an automatic check, writing or running tests, or an
+independent review of a finished diff. Keep small steps, ambiguous or design work, tightly coupled
+edits and integration with the lead. The playbook workflow below applies when explicitly requested.
+
+Prefer Codex while both its 5h and week windows are known, fresh and below
+`quota.criticalThreshold`: its subscription quota left at reset is lost. Honor `billing` in
+`alethe-prices.json` and `passive.prefer`; API billing needs a price comparison rather than a
+subscription assumption. Run each bounded Codex unit as a one-worker `economy` wave through
+`new`, `run --detach`, and `wait`, pinning model and effort. When Codex is low or the unit needs
+this conversation's context, use the agent's own cheaper subagents instead: in Claude Code,
+the Agent tool with `model: haiku` or `sonnet`, and a pinned effort where supported. Unknown
+quota is not evidence of spare room; check before routing, without refreshing Claude from a hook.
+
+Say it in one line when delegating, without confirmation: "Handing the test sweep to Codex
+(5h at 4%) to save Opus." Ask first before more than `passive.askAboveWorkers` (default 2)
+parallel workers, anything on a low provider, anything costing more than doing it yourself,
+or passing `quota.stopAt`. When spend climbs on routine work, suggest `/model sonnet` once;
+the lead model is the user's choice.
+
+The hook gives a short brief on the first prompt, then stays quiet until a time, spend or quota
+check is due, including during long tool turns. `spend` reads Claude Code JSONL locally, separates
+lead and delegated usage, and shows a list-price estimate: a subscription yardstick, not a bill.
+`/alethe off` disables it in this project; `/alethe off everywhere` disables it everywhere.
+`/alethe passive` enables it explicitly here. `ALETHE_PASSIVE=0` disables only the implicit
+default; explicit modes still apply. Workers never receive hook context. Without the hook,
+run `mode show` at session start and after compaction, and `spend`/`usage` before substantial work.
+See [references/playbooks.md](references/playbooks.md) for the optional `passive` settings.
+
 ## Stay on
 
 1. Use it proactively whenever a request splits into bounded independent units, even when nobody
    mentions orchestration, as the description says. Small or tightly coupled work stays with you.
 2. `mode on --everywhere` makes it the default in every project, with no expiry. `mode off` in a
-   project turns it off there only, and `mode off --everywhere` removes the default.
+   project turns it off there only, and `mode off --everywhere` also disables passive by default.
 3. `mode on` keeps it on for the current project (the repository root, or the folder) until
    `mode off`, or after 12 hours without a prompt. A project mode wins over the default.
 
@@ -118,7 +153,7 @@ Turn it on when the user says `/alethe on`, gives a standing instruction, or ask
 "from now on". Map the instruction to a goal or care level when one fits, and keep the user's own
 words as a rule. Confirm in one line what is now on, then go back to what they were doing.
 
-The Claude Code hook reminds you while a mode is on; without it, run `mode show` at session start
+The Claude Code hook reminds you every prompt in explicit non-passive modes; without it, run `mode show` at session start
 and after compaction. Delegate only where the overhead pays under the goal; keep small work yourself.
 
 ## Join mid-task

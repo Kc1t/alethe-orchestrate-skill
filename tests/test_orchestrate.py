@@ -270,7 +270,10 @@ class RunnerTest(Fixtures):
         self.assertEqual(orchestrate.skill_version(), version)
         result = subprocess.run([sys.executable, str(SCRIPT), "--version"], capture_output=True, text=True)
         self.assertEqual(result.stdout.strip(), f"alethe-orchestrate {version}")
-        code, out, _ = self.call("doctor", "--policy", self.policy)
+        with mock.patch.object(orchestrate, "probe_provider", side_effect=lambda provider: {
+            "provider": provider, "installed": False,
+        }):
+            code, out, _ = self.call("doctor", "--policy", self.policy)
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["skill"]["version"], version)
 
@@ -552,7 +555,7 @@ class GuardTest(Fixtures):
     def test_a_mode_stays_on_for_the_project_and_reminds_every_prompt(self):
         repo = self.make_repo()
         (repo / "src").mkdir()
-        self.assertEqual(self.hook(repo), "")
+        self.assertIn("Alethe passive", self.hook(repo))
         code, out, err = self.call("mode", "on", "--cwd", repo / "src", "--care", "careful", "--rule", "a partir de agora preciso ir com cuidado")
         self.assertEqual(code, 0, err)
         self.assertEqual(Path(json.loads(out)["scope"]), repo.resolve())
@@ -563,12 +566,12 @@ class GuardTest(Fixtures):
         self.assertIn("Goal: save", reminder)
         self.assertIn("Careful: read before writing", reminder)
         self.assertIn("User rules: a partir de agora preciso ir com cuidado.", reminder)
-        self.assertEqual(self.hook(self.root), "")
+        self.assertIn("Alethe passive", self.hook(self.root))
         with mock.patch.object(sys, "stdin", io.StringIO("not json")):
             self.assertEqual(self.call("hook")[:2], (0, ""))
 
         with mock.patch.object(orchestrate.time, "time", return_value=time.time() + orchestrate.MODE_IDLE_SECONDS + 1):
-            self.assertEqual(self.hook(repo), "")
+            self.assertIn("Alethe passive", self.hook(repo))
         self.assertEqual(self.call("mode", "on", "--cwd", repo, "--clear-rules")[0], 0)
         self.assertNotIn("User rules", self.hook(repo))
         self.assertEqual(self.call("mode", "off", "--goal", "max", "--cwd", repo)[0], 2)
@@ -614,8 +617,13 @@ class GuardTest(Fixtures):
 
     def test_the_plugin_hook_and_command_point_at_the_runner(self):
         hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-        command = hooks["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
-        self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/alethe/scripts/orchestrate.py\" hook", command)
+        for event, timeout in (("UserPromptSubmit", 10), ("PostToolUse", 5)):
+            entry = hooks["hooks"][event][0]["hooks"][0]
+            self.assertEqual(entry["timeout"], timeout)
+            self.assertIn("${CLAUDE_PLUGIN_ROOT}/skills/alethe/scripts/hook.py\"", entry["command"])
+            self.assertTrue(entry["command"].startswith("python3 -S "))
+            self.assertIn(" || python -S ", entry["command"])
+            self.assertTrue(entry["command"].endswith(" || true"))
         self.assertEqual(sorted(p.name for p in (ROOT / "skills").iterdir()), ["alethe"])
         self.assertIn("## Short commands", (SKILL / "SKILL.md").read_text(encoding="utf-8"))
 
