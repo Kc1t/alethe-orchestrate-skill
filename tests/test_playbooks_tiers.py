@@ -103,7 +103,8 @@ class PlaybookSettingsTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="alethe-playbooks-")
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        # Resolve so Windows 8.3 short names (RUNNER~1) match the long paths the runner reports.
+        self.root = Path(self.temporary.name).resolve()
         self.policy = self.root / "policy.json"
         self.playbooks = self.root / runner.USER_PLAYBOOKS_FILE
         self.bundled = runner.bundled_playbooks_path().read_text(encoding="utf-8")

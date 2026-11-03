@@ -462,8 +462,14 @@ class PassiveTest(unittest.TestCase):
     def test_default_transcript_selection_and_explicit_session(self):
         folder = r.claude_project_folder(self.project)
         self.assertEqual(folder.name, "".join(char if char.isalnum() else "-" for char in str(self.project)))
-        self.assertEqual(r.claude_project_folder(Path("/Users/kauamiguel/Developer/alethe/poc")).name,
-                         "-Users-kauamiguel-Developer-alethe-poc")
+        # Claude Code names a project folder after the absolute path with every non-alphanumeric
+        # character replaced by "-", so the drive letter stays on Windows.
+        if os.name == "nt":
+            self.assertEqual(r.claude_project_folder(Path("C:/Users/kc/Developer/alethe/poc")).name,
+                             "C--Users-kc-Developer-alethe-poc")
+        else:
+            self.assertEqual(r.claude_project_folder(Path("/Users/kauamiguel/Developer/alethe/poc")).name,
+                             "-Users-kauamiguel-Developer-alethe-poc")
         folder.mkdir(parents=True)
         old = folder / "old.jsonl"
         newest = folder / "new.jsonl"
