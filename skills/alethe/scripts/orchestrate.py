@@ -223,6 +223,7 @@ FAILURE_HINTS = {
     "budget": "a budget stopped it; raise the budget or drop the unit",
     "budget_exceeded": "its own cost cap stopped it; raise maxReportedCostUsd or narrow the task",
     "invalid_output": "its output did not parse; check stderr.log and the CLI version",
+    "session_not_found": "the provider could not resume that session and started another; launch a new worker with a compact handoff",
 }
 ERROR_LINE = re.compile(r"\berror\b|\bfailed\b|denied|forbidden|exception|\b4\d\d\b|\b5\d\d\b", re.IGNORECASE)
 FAILURE_PATTERNS = (
@@ -3440,6 +3441,60 @@ class BudgetTracker:
             return self.usage_snapshot()
 
 
+# Providers whose resume keeps the session id (measured 2026-11-04: Claude and Agy). For them, a different
+# session id after a resume means the provider did not find the session and started a new one from scratch.
+RESUME_KEEPS_SESSION_ID = ("claude", "agy")
+
+
+def lost_resume(worker: Dict[str, Any], session: Optional[str]) -> Optional[str]:
+    resume = worker.get("resume")
+    if not resume or worker["provider"] not in RESUME_KEEPS_SESSION_ID or not session or session == resume:
+        return None
+    return f"{worker['provider']} could not resume session {resume} and started session {session} instead"
+
+
+def prior_session_total(folder: Path, provider: str, session: str, skip: Path) -> Optional[Dict[str, Optional[float]]]:
+    """Latest running totals reported by an earlier worker of the same provider session in this orchestration."""
+    best: Optional[Dict[str, Any]] = None
+    for path in folder.glob("*/workers/*/outcome.json"):
+        if path == skip:
+            continue
+        outcome = read_optional_json(path)
+        if not isinstance(outcome, dict) or outcome.get("provider") != provider or outcome.get("sessionId") != session:
+            continue
+        if best is None or str(outcome.get("finishedAt") or "") >= str(best.get("finishedAt") or ""):
+            best = outcome
+    if best is None:
+        return None
+    metrics = best.get("metrics") if isinstance(best.get("metrics"), dict) else {}
+    return {"costUsd": number(metrics.get("totalCostUsd")), "tokens": reported_total_tokens(metrics.get("usage"))}
+
+
+def resumed_increment(
+    worker: Dict[str, Any], run_dir: Path, session: Optional[str], metrics: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """Metrics the budget should count for a resumed worker, and whether the increment is confirmed.
+
+    Claude's total_cost_usd and Agy's token usage are running totals for the whole conversation, so a resumed
+    worker is charged only what it added. Without the earlier total the reported value is kept (never lower)."""
+    fields = ACCUMULATING_METRICS.get(worker["provider"], ())
+    if not worker.get("resume") or not fields or not session:
+        return metrics, None
+    prior = prior_session_total(run_dir.parent, worker["provider"], session, run_dir / "workers" / worker["id"] / "outcome.json")
+    if prior is None:
+        return metrics, "unconfirmed"
+    adjusted = dict(metrics)
+    now = {"costUsd": number(metrics.get("totalCostUsd")), "tokens": reported_total_tokens(metrics.get("usage"))}
+    for name in fields:
+        if now[name] is None or prior[name] is None or now[name] < prior[name]:
+            return metrics, "unconfirmed"
+        if name == "costUsd":
+            adjusted["totalCostUsd"] = round(now[name] - prior[name], 6)
+        else:
+            adjusted["usage"] = {"total_tokens": int(now[name] - prior[name])}
+    return adjusted, "confirmed"
+
+
 def run_worker(
     worker: Dict[str, Any],
     run_id: str,
@@ -3477,6 +3532,7 @@ def run_worker(
         "diffPath": None,
         "diffError": None,
         "sessionId": None,
+        "resumeIncrement": None,
         "metrics": {},
         "costCapUsd": None,
         "error": None,
@@ -3586,6 +3642,15 @@ def run_worker(
         details = extract_details(values)
         handoff = parse_handoff(result_text)
         kind, reset_hint = classify_failure(status, error, stderr_path, result_text, ended == "stalled")
+        session = extract_session(values)
+        lost = lost_resume(worker, session) if status == "succeeded" else None
+        if lost:
+            # The provider answered from a brand new session with only the short resume brief: never let that pass as DONE.
+            status, error, kind, reset_hint = "failed", lost, "session_not_found", None
+            handoff = {key: None for key in handoff}
+            budget_metrics, increment = metrics, None
+        else:
+            budget_metrics, increment = resumed_increment(worker, run_dir, session, metrics)
         if ended == "stopped":
             status, error, kind, reset_hint = "stopped", "stopped on request", "stopped", None
         diff_path, diff_error = (
@@ -3606,7 +3671,7 @@ def run_worker(
                             "utf-8", errors="surrogateescape"
                         ).split("\0")
                     dirty_before = sorted(set(before).intersection(diff_paths))[:MAX_LISTED_PATHS]
-        tracker.finish(worker_id, metrics)
+        tracker.finish(worker_id, budget_metrics)
         return settle(
             status=status,
             exitCode=exit_code,
@@ -3616,8 +3681,9 @@ def run_worker(
             stderrPath=str(stderr_path),
             diffPath=str(diff_path) if diff_path else None,
             diffError=diff_error,
-            sessionId=extract_session(values),
+            sessionId=session,
             metrics=metrics,
+            resumeIncrement=increment,
             error=error,
             failureKind=kind,
             resetHint=reset_hint,

@@ -51,10 +51,8 @@ instead of launching a new one with a longer brief:
 1. Take the `sessionId` from the worker's outcome and check that it is the same provider.
 2. Launch one worker with `resume: "<sessionId>"` and a brief that holds only the answer and "continue
    where you stopped, without rereading what you already read".
-3. After the run, compare the `sessionId` it returns with the one you sent. If they differ, the session was
-   lost and the worker started from scratch with only the short brief: treat it as a new worker and resend
-   the full brief.
-4. If the resume fails fast (`failed`), or the worker cannot be resumed, launch a new worker with a compact
+3. If the resume ends `failed` (including `failureKind: session_not_found`, when the provider could not find
+   the session and started another), or the worker cannot be resumed, launch a new worker with a compact
    handoff.
 
 Resume does not pay when the answer is long (measured break-even near 20 thousand characters, about 6 thousand

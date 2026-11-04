@@ -19,8 +19,16 @@ Added:
   `incremental: "unconfirmed"` and nothing is estimated. New `totals.resumedIncremental` and
   `totals.resumedUnconfirmed`. `plan.json` now records `resume`.
 
-Not changed: the `maxReportedCostUsd` budget still sums the totals as reported, and a resume that silently
-starts a new session (Agy with an unknown id) is documented, not detected.
+Fixed:
+
+- A resume whose session the provider could not find no longer passes as success. Agy answers an unknown
+  session id by starting a new session with another id and can end `DONE` from the short resume brief alone.
+  The runner now compares the returned `sessionId` with the one sent (Claude and Agy keep it on a real resume)
+  and fails the worker with `failureKind: session_not_found` and no handoff status. Its spend is still reported.
+- `maxReportedCostUsd` and `maxReportedTokens` count only what a resumed worker added. They summed the running
+  totals the providers report for the whole conversation, so a resumed worker was charged for the earlier turns
+  again. The earlier total is read from the same orchestration folder; when it is not there the reported value is
+  kept (never lower) and `resumeIncrement` in `outcome.json` is `unconfirmed`. Other providers are not adjusted.
 
 ## 23 (2026-11-03)
 
