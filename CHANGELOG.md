@@ -3,6 +3,16 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## Unreleased
+
+Fixed:
+
+- `report` no longer counts a resumed session twice. Claude's `total_cost_usd` and the `agy` token usage of a resumed
+  worker are running totals for the whole conversation; the report now shows the increment over the earlier turns of
+  the same session (the value as reported stays in `costUsdReported` / `tokensReported`). If the earlier total is not in
+  the report, the worker is marked `incremental: "unconfirmed"` and nothing is invented. `plan.json` now records
+  `resume`. The `maxReportedCostUsd` budget still sums reported totals and is not changed here.
+
 ## 23 (2026-11-03)
 
 Added:

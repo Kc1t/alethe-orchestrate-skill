@@ -4925,6 +4925,7 @@ def plan_payload(
                 "modelNote": worker["modelNote"],
                 "mode": worker["mode"],
                 "isolate": worker["isolate"],
+                "resume": worker.get("resume"),
                 "seedPaths": worker["seedPaths"],
                 "timeoutSeconds": worker["timeoutSeconds"],
                 "effectiveTimeoutSeconds": effective_timeout,
@@ -5135,6 +5136,8 @@ def collect_run(run_dir: Path) -> Dict[str, Any]:
                 "costByModel": metrics.get("costByModel", {}),
                 "quotaError": outcome.get("quotaError"),
                 "costUsd": number(metrics.get("totalCostUsd")),
+                "resume": intent.get("resume"),
+                "incremental": None,
                 "sessionId": outcome.get("sessionId"),
                 "worktree": outcome.get("worktree"),
                 "summary": handoff["workerSummary"] or result_summary(result_path),
@@ -5245,10 +5248,53 @@ def summed(values: Sequence[Any]) -> Optional[float]:
     return sum(known) if known else None
 
 
+# Provider CLIs differ in what a resumed session reports. Claude's total_cost_usd and the agy token usage are
+# running totals for the whole conversation, so summing them per worker counts the earlier turns again.
+# Measured 2026-11-04: Claude cost accumulates (tokens do not); agy tokens accumulate. Others: not known.
+ACCUMULATING_METRICS = {"claude": ("costUsd",), "agy": ("tokens",)}
+
+
+def apply_resume_increments(workers: Sequence[Dict[str, Any]]) -> None:
+    """Turn the running totals of resumed workers into increments, in order, without inventing numbers.
+
+    Sets worker["incremental"] to "confirmed" (value is now this worker's own spend), "unconfirmed" (it continued
+    a session whose earlier total this report cannot see, so its figures may include earlier spend) or None.
+    The value as the provider reported it stays in worker["costUsdReported"] / worker["tokensReported"].
+    """
+    totals: Dict[Any, Dict[str, Any]] = {}
+    for worker in workers:
+        worker["costUsdReported"] = worker["costUsd"]
+        worker["tokensReported"] = worker["tokens"]
+        session, provider = worker.get("sessionId"), worker.get("provider")
+        if not session or worker["status"] not in RAN_STATUSES:
+            continue
+        fields = ACCUMULATING_METRICS.get(provider, ())
+        key = (provider, session)
+        earlier = totals.get(key)
+        if earlier is None:
+            if worker.get("resume"):
+                worker["incremental"] = "unconfirmed"
+            totals[key] = {name: worker[name] for name in ("costUsd", "tokens")}
+            continue
+        reported = {name: worker[name] for name in ("costUsd", "tokens")}
+        if not fields:
+            worker["incremental"] = "unconfirmed"
+        else:
+            worker["incremental"] = "confirmed"
+            for name in fields:
+                now, before = reported[name], earlier[name]
+                if now is None or before is None or now < before:
+                    worker["incremental"] = "unconfirmed"
+                else:
+                    worker[name] = round(now - before, 6)
+        totals[key] = reported
+
+
 def build_report(run_dirs: Sequence[Path], folder: Optional[Path] = None) -> Dict[str, Any]:
     meta = orchestration_meta(folder)
     runs = sorted((collect_run(path) for path in run_dirs), key=lambda run: run["startedAt"] or "")
     workers = [worker for run in runs for worker in run["workers"]]
+    apply_resume_increments(workers)
     ran = [
         worker
         for worker in workers
@@ -5316,6 +5362,8 @@ def build_report(run_dirs: Sequence[Path], folder: Optional[Path] = None) -> Dic
             "costUsd": summed([worker["costUsd"] for worker in workers]),
             "costReportedBy": sorted({w["label"] for w in workers if w["costUsd"] is not None}),
             "costNotReportedBy": silent("costUsd"),
+            "resumedIncremental": [w["id"] for w in workers if w["incremental"] == "confirmed"],
+            "resumedUnconfirmed": [w["id"] for w in workers if w["incremental"] == "unconfirmed"],
             "transcriptBytes": sum(worker["transcriptBytes"] for worker in workers),
             "resultBytes": sum(worker["resultBytes"] for worker in workers),
             "changes": {
@@ -5570,6 +5618,16 @@ def render_markdown(report: Dict[str, Any]) -> str:
     if totals["costNotReportedBy"]:
         cost += f"; {verb_for(totals['costNotReportedBy'], 'reports', 'report')} no cost"
     lines.append(f"- **Cost:** {cost}")
+    if totals["resumedIncremental"]:
+        lines.append(
+            f"- **Resumed sessions:** {counted(len(totals['resumedIncremental']), 'worker')} counted as the increment "
+            "over the earlier turns of the same session (providers report running totals)"
+        )
+    if totals["resumedUnconfirmed"]:
+        lines.append(
+            f"- **Incremental not confirmed:** {listed(totals['resumedUnconfirmed'])} continued a session whose earlier "
+            "spend this report cannot see, so their figures may include it"
+        )
     lines.append(
         f"- **Lead context:** {human_bytes(totals['transcriptBytes'])} of worker transcripts stayed on disk, "
         f"{human_bytes(totals['resultBytes'])} of results to read"
