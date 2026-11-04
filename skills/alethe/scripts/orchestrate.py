@@ -2350,7 +2350,7 @@ def internal_git(cwd: Path, args: Sequence[str], input_bytes: Optional[bytes], t
     environment = {key: value for key, value in os.environ.items()
                    if key not in ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
                    and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
-    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    # System config stays: it is admin-owned and carries core.autocrlf on Git for Windows.
     hooks = git_hooks_directory()
     # check-ignore takes literal paths already and rejects pathspec magic.
     literal = [] if args and args[0] == "check-ignore" else ["--literal-pathspecs"]

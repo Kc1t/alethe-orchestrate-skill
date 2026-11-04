@@ -19,7 +19,7 @@ Fixed:
 - `stop` skips final workers and verifies recorded OS process start times before signalling;
   unverifiable/legacy PIDs are reported without being killed (#11).
 - Worktree and seed destinations reject symlink/junction escapes; every internal git call disables
-  hooks and fsmonitor and ignores system config. Editor trace labels render as text (#11).
+  hooks and fsmonitor and ignores inherited `GIT_CONFIG_*` overrides. Editor trace labels render as text (#11).
 
 Changed:
 

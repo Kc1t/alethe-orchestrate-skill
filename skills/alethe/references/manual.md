@@ -31,7 +31,7 @@ worktree. Agy read-only reviewers need a diff file because plan mode cannot run 
 Unreadable safety help prevents Claude/Codex launches; readable older help keeps optional-flag
 compatibility. Claude uses only user settings when the CLI supports `--setting-sources`.
 
-Internal git operations disable hooks and fsmonitor and ignore system config. Worktree and seed
+Internal git operations disable hooks and fsmonitor and ignore inherited `GIT_CONFIG_*` overrides. Worktree and seed
 destinations must remain in the repository without symlink/junction components. `stop` kills only
 unfinished workers whose recorded OS start time still matches the PID; legacy/unverifiable PIDs
 are reported without being signalled.

@@ -330,7 +330,7 @@ class SecurityTest(unittest.TestCase):
             hooks = Path(next(arg.split("=", 1)[1] for arg in args if arg.startswith("core.hooksPath=")))
             self.assertTrue(hooks.is_dir())
             self.assertEqual(list(hooks.iterdir()), [])
-            self.assertEqual(call.kwargs["env"]["GIT_CONFIG_NOSYSTEM"], "1")
+            self.assertNotIn("GIT_CONFIG_NOSYSTEM", call.kwargs["env"])
             self.assertNotIn("GIT_CONFIG_PARAMETERS", call.kwargs["env"])
             self.assertNotIn("GIT_CONFIG_KEY_0", call.kwargs["env"])
 
