@@ -5,13 +5,22 @@ Alethe installs and updates the skill by that number.
 
 ## Unreleased
 
-Fixed:
+Added:
 
-- `report` no longer counts a resumed session twice. Claude's `total_cost_usd` and the `agy` token usage of a resumed
-  worker are running totals for the whole conversation; the report now shows the increment over the earlier turns of
-  the same session (the value as reported stays in `costUsdReported` / `tokensReported`). If the earlier total is not in
-  the report, the worker is marked `incremental: "unconfirmed"` and nothing is invented. `plan.json` now records
-  `resume`. The `maxReportedCostUsd` budget still sums reported totals and is not changed here.
+- Guidance for answering `STATUS: NEEDS_CONTEXT` by resuming the worker's session with a short brief instead
+  of launching a new worker (`references/briefs.md`), and how providers behave when a session cannot be
+  resumed (`references/providers.md`). On a synthetic project the resumed worker's own cost was 12 to 48
+  percent below a new worker's with the same quality; the gain is gone for answers of about 20 thousand
+  characters or more.
+- `report` shows a resumed worker as the increment over the earlier turns of the same session. Claude's
+  `total_cost_usd` and Agy's token usage are running totals for the whole conversation, so summing them per
+  worker counted the earlier turns again (+82 percent on the measured case). The value as reported stays in
+  `costUsdReported` / `tokensReported`; when the earlier total is not in the report the worker is marked
+  `incremental: "unconfirmed"` and nothing is estimated. New `totals.resumedIncremental` and
+  `totals.resumedUnconfirmed`. `plan.json` now records `resume`.
+
+Not changed: the `maxReportedCostUsd` budget still sums the totals as reported, and a resume that silently
+starts a new session (Agy with an unknown id) is documented, not detected.
 
 ## 23 (2026-11-03)
 
