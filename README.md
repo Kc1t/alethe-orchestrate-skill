@@ -12,7 +12,7 @@
 
   <p align="center">
     <a href="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml/badge.svg"></a>
-    <a href="./CHANGELOG.md"><img alt="Skill version" src="https://img.shields.io/badge/skill-v23-4f46e5?style=flat-square"></a>
+    <a href="./CHANGELOG.md"><img alt="Skill version" src="https://img.shields.io/badge/skill-v24-4f46e5?style=flat-square"></a>
     <a href="./LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
     <img alt="Python 3.9+ optional" src="https://img.shields.io/badge/python-3.9%2B%20optional-3776ab?style=flat-square&logo=python&logoColor=white">
     <img alt="Windows, macOS and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555?style=flat-square">
@@ -85,6 +85,17 @@ state; the hook sends nothing over the network. `/alethe off` disables it in thi
 implicit default. Explicit project modes can still apply; turn them off in those projects too.
 Off modes leave a quick silent hook check; uninstall the plugin to stop the script from running.
 
+## Worker safety
+
+Workers get provider-specific authentication, with unrelated secret variables removed. The runner
+requires real read-only support, confines working directories and task files, and checks worktree
+paths, unsafe arguments and process identities. Internal git calls disable hooks and fsmonitor.
+Exceptions belong in the saved user policy's `trust` block (`allowUnsafe`, `cwdRoots`, `workerEnv`),
+changed only at your explicit request; a plan cannot authorize them.
+
+`/alethe clean` previews completed folders older than 14 days. Use `clean --older-than DAYS --yes`
+to delete eligible folders; current sessions, unfinished work and open worktrees are kept.
+
 ## Commands
 
 Type them after `/alethe`.
@@ -99,6 +110,7 @@ Type them after `/alethe`.
 | `freestyle` | Works as usual, only watches cost and suggests cheaper models |
 | `status` | Where it stands |
 | `stop` | Stops the workers |
+| `clean` | Previews old completed folders; add `--yes` to delete |
 | `report` | What each worker did and cost |
 | `off` | Turns it off here |
 

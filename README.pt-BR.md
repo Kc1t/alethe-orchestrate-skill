@@ -12,7 +12,7 @@
 
   <p align="center">
     <a href="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Kc1t/alethe-orchestrate-skill/actions/workflows/ci.yml/badge.svg"></a>
-    <a href="./CHANGELOG.md"><img alt="Versão da skill" src="https://img.shields.io/badge/skill-v23-4f46e5?style=flat-square"></a>
+    <a href="./CHANGELOG.md"><img alt="Versão da skill" src="https://img.shields.io/badge/skill-v24-4f46e5?style=flat-square"></a>
     <a href="./LICENSE"><img alt="Licença" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
     <img alt="Python 3.9+ opcional" src="https://img.shields.io/badge/python-3.9%2B%20optional-3776ab?style=flat-square&logo=python&logoColor=white">
     <img alt="Windows, macOS e Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-555?style=flat-square">
@@ -87,6 +87,18 @@ arquivos de sessão do Codex e o estado do Alethe; o hook não envia nada pela r
 desligue-os nesses projetos também. Mesmo desligado, o hook faz uma checagem rápida e silenciosa;
 para impedir a execução do script, desinstale o plugin.
 
+## Segurança dos workers
+
+Os workers recebem a autenticação do próprio provedor; variáveis com segredos de outros serviços
+são removidas. O runner exige suporte real a somente leitura, limita os diretórios de trabalho e
+arquivos de tarefa e verifica caminhos de worktrees, argumentos inseguros e a identidade dos
+processos. As chamadas internas ao git desativam hooks e fsmonitor. As exceções ficam no bloco
+`trust` da política salva (`allowUnsafe`, `cwdRoots`, `workerEnv`), alterado somente a seu pedido
+explícito; um plano não pode conceder essas permissões.
+
+`/alethe clean` lista pastas concluídas há mais de 14 dias. Use `clean --older-than DIAS --yes`
+para apagar as elegíveis; sessões atuais, trabalho pendente e worktrees abertas são preservados.
+
 ## Comandos
 
 Digite depois de `/alethe`.
@@ -101,6 +113,7 @@ Digite depois de `/alethe`.
 | `freestyle` | Trabalha normal, só cuida do custo e sugere modelos mais baratos |
 | `status` | Onde está |
 | `stop` | Para os workers |
+| `clean` | Lista pastas antigas concluídas; `--yes` apaga as elegíveis |
 | `report` | O que cada worker fez e custou |
 | `off` | Desliga aqui |
 

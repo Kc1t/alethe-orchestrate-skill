@@ -74,6 +74,8 @@ UNSAFE_FLAGS = {
     "--trust-all-tools",
     "--allow-all-tools",
     "--yolo",
+    "--trust-all",
+    "-y",
 }
 BATCH_SUFFIXES = (".cmd", ".bat")
 BATCH_UNSAFE = re.compile(r'["&|<>^%!\r\n]')
@@ -166,6 +168,7 @@ DEFAULT_POLICY: Dict[str, Any] = {
     "maxConcurrent": 4,
     "budget": {},
     "modelTiers": {},
+    "trust": {"allowUnsafe": False, "cwdRoots": [], "workerEnv": []},
 }
 BUDGET_FIELDS = (
     "maxCalls",
@@ -213,6 +216,7 @@ HANDOFF_LINE = re.compile(
     r"^[\s>*_`#-]*(STATUS|SUMMARY|VERDICT)[*_`]*\s*:[*_`\s]*(.+?)[*_`\s]*$", re.MULTILINE | re.IGNORECASE
 )
 FAILURE_HINTS = {
+    "permission_denied": "a required tool was denied; give the worker a readable diff or choose a provider/mode that supports the needed tool",
     "rate_limited": "the provider hit a usage limit; ask the user whether to wait for the reset or move the unit to another provider",
     "quota_low": "its provider reached quota.stopAt before it started; ask the user whether to wait, move it or confirm --allow-low-quota",
     "auth_required": "log in to the CLI or check its subscription, then run the unit again",
@@ -226,6 +230,7 @@ FAILURE_HINTS = {
 }
 ERROR_LINE = re.compile(r"\berror\b|\bfailed\b|denied|forbidden|exception|\b4\d\d\b|\b5\d\d\b", re.IGNORECASE)
 FAILURE_PATTERNS = (
+    ("permission_denied", re.compile(r"permission denied|denied actions?", re.IGNORECASE)),
     ("rate_limited", re.compile(r"\b429\b|rate.?limit|usage limit|quota|too many requests|hit your (?:\w+ )?limit", re.I)),
     (
         "auth_required",
@@ -1362,7 +1367,7 @@ def probe_claude_quota(policy_path: Path) -> Optional[Dict[str, Any]]:
         args, _, _, _ = build_invocation(worker, cwd, cwd, {}, threading.Lock(), CLAUDE_PROBE_SECONDS)
         try:
             completed = subprocess.run(args, input=CLAUDE_PROBE_PROMPT.encode("utf-8"), cwd=cwd,
-                env=worker_environment(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env=worker_environment("claude", load_policy(policy_path)["trust"]), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 timeout=CLAUDE_PROBE_SECONDS)
         except subprocess.TimeoutExpired as error:
             raise PlanError(f"Claude did not answer within {CLAUDE_PROBE_SECONDS} seconds") from error
@@ -1379,7 +1384,7 @@ def probe_agy_quota(policy_path: Path) -> Optional[Dict[str, Any]]:
     with tempfile.TemporaryDirectory(prefix="alethe-usage-") as folder:
         try:
             completed = subprocess.run(args, stdin=subprocess.DEVNULL, cwd=Path(folder),
-                env=worker_environment(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                env=worker_environment("agy", load_policy(policy_path)["trust"]), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 timeout=AGY_PROBE_SECONDS)
         except subprocess.TimeoutExpired as error:
             raise PlanError(f"Antigravity did not answer within {AGY_PROBE_SECONDS} seconds") from error
@@ -1809,6 +1814,24 @@ def resolve_model_tier(
     return {**worker, "model": spec.get("model"), "effort": spec.get("effort"), "modelNote": note}
 
 
+def validate_trust(raw: Any) -> Dict[str, Any]:
+    raw = {} if raw is None else raw
+    if not isinstance(raw, dict) or set(raw) - {"allowUnsafe", "cwdRoots", "workerEnv"}:
+        raise PlanError("policy.trust must be an object with allowUnsafe, cwdRoots and workerEnv only")
+    unsafe = raw.get("allowUnsafe", False)
+    if type(unsafe) is not bool:
+        raise PlanError("policy.trust.allowUnsafe must be a boolean")
+    roots, environment = raw.get("cwdRoots", []), raw.get("workerEnv", [])
+    if not isinstance(roots, list) or any(not isinstance(root, str) or not root.strip()
+            or not Path(root).expanduser().is_absolute() for root in roots):
+        raise PlanError("policy.trust.cwdRoots must list absolute directory paths")
+    if not isinstance(environment, list) or any(not isinstance(name, str)
+            or re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None for name in environment):
+        raise PlanError("policy.trust.workerEnv must list environment variable names")
+    return {"allowUnsafe": unsafe, "cwdRoots": [str(Path(root).expanduser().resolve()) for root in roots],
+            "workerEnv": list(dict.fromkeys(environment))}
+
+
 def validate_policy(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise PlanError("policy must be a JSON object")
@@ -1854,12 +1877,13 @@ def validate_policy(raw: Any) -> Dict[str, Any]:
         "maxConcurrent": max_concurrent,
         "budget": validate_budget(raw.get("budget"), "policy.budget"),
         "modelTiers": validate_model_tiers(raw.get("modelTiers"), "policy.modelTiers"),
+        "trust": validate_trust(raw.get("trust")),
     }
 
 
 def load_policy(path: Path) -> Dict[str, Any]:
     if not path.exists():
-        return dict(DEFAULT_POLICY)
+        return copy.deepcopy(DEFAULT_POLICY)
     return validate_policy(read_json(path))
 
 
@@ -1996,7 +2020,7 @@ def validate_relative_path(value: Any, label: str) -> str:
     return text
 
 
-def load_task(worker: Dict[str, Any], plan_dir: Path) -> str:
+def load_task(worker: Dict[str, Any], plan_dir: Path, orchestration: Optional[Path] = None) -> str:
     inline = worker.get("task")
     task_file = worker.get("taskFile")
     if (inline is None) == (task_file is None):
@@ -2007,6 +2031,10 @@ def load_task(worker: Dict[str, Any], plan_dir: Path) -> str:
         path = Path(require_string(task_file, "worker.taskFile"))
         if not path.is_absolute():
             path = plan_dir / path
+        path = path.resolve()
+        roots = [plan_dir, *([orchestration] if orchestration is not None else [])]
+        if not any(is_inside(path, root) for root in roots):
+            raise PlanError(f"taskFile {path} escapes the plan directory or orchestration folder; copy the brief into one of them")
         try:
             task = path.read_text(encoding="utf-8").strip()
         except OSError as error:
@@ -2022,9 +2050,13 @@ def validate_plan(
     policy: Optional[Dict[str, Any]] = None,
     strategy_override: Optional[str] = None,
     policy_path: Optional[Path] = None,
+    orchestration: Optional[Path] = None,
 ) -> Dict[str, Any]:
     settings = playbook_settings(policy_path)
     policy = validate_policy(policy or DEFAULT_POLICY)
+    lead_root = checkout_root(Path.cwd()) or Path.cwd().resolve()
+    cwd_roots = [lead_root, *(Path(root) for root in policy["trust"]["cwdRoots"])]
+    orchestration = orchestration or current_folder()
     if not isinstance(raw, dict):
         raise PlanError("plan must be a JSON object")
     unknown = set(raw) - {
@@ -2113,9 +2145,16 @@ def validate_plan(
         mode = item.get("mode", "read-only")
         if mode not in ("read-only", "write"):
             raise PlanError(f"worker {worker_id} mode must be read-only or write")
+        if mode == "read-only" and requested_provider != "auto" and not PROVIDER_CAPABILITIES[requested_provider]["readOnly"]:
+            raise PlanError(f"worker {worker_id}: {requested_provider} cannot enforce read-only; choose codex, claude or agy, "
+                            "or use mode: write with isolate: true in a disposable worktree")
         cwd = Path(require_string(item.get("cwd"), f"worker {worker_id}.cwd")).expanduser()
         if not cwd.is_absolute():
             cwd = (plan_path.parent / cwd).resolve()
+        cwd = cwd.resolve()
+        if not any(is_inside(cwd, root) for root in cwd_roots):
+            raise PlanError(f"worker {worker_id} cwd {cwd} is outside the lead checkout; "
+                            "the user must add an allowed directory to policy.trust.cwdRoots")
         if not cwd.is_dir():
             raise PlanError(f"worker {worker_id} cwd is not a directory: {cwd}")
         timeout = item.get("timeoutSeconds", default_timeout)
@@ -2154,7 +2193,7 @@ def validate_plan(
             not isinstance(idle_timeout, int) or isinstance(idle_timeout, bool) or not 5 <= idle_timeout <= 86400
         ):
             raise PlanError(f"worker {worker_id} idleTimeoutSeconds must be between 5 and 86400")
-        task = load_task(item, plan_path.parent)
+        task = load_task(item, plan_path.parent, orchestration)
         normalized = {
             "id": worker_id,
             "why": optional_note(item.get("why"), f"worker {worker_id}.why", NOTE_LIMITS["workerWhy"]),
@@ -2172,9 +2211,10 @@ def validate_plan(
             "mcp": mcp,
             "idleTimeoutSeconds": idle_timeout,
             "task": task,
+            "trust": copy.deepcopy(policy["trust"]),
         }
         if requested_provider == "custom":
-            normalized.update(validate_custom(item, worker_id))
+            normalized.update(validate_custom(item, worker_id, policy["trust"]))
         chosen_provider = choose_provider(requested_provider, normalized, policy)
         normalized["provider"] = chosen_provider
         if chosen_provider == requested_provider:
@@ -2230,7 +2270,54 @@ def validate_plan(
     }
 
 
-def validate_custom(worker: Dict[str, Any], worker_id: str) -> Dict[str, Any]:
+def unsafe_argument(args: Sequence[str]) -> Optional[str]:
+    def unsafe_setting(setting: str) -> bool:
+        key, separator, value = setting.partition("=")
+        if not separator:
+            return False
+        key = key.strip().strip("\"'").lower().replace("-", "_")
+        value = value.strip().strip("\"'").lower().replace("_", "-")
+        leaf = key.rsplit(".", 1)[-1]
+        if leaf in ("sandbox", "sandbox_mode", "sandbox_permissions"):
+            return value not in ("read-only", "workspace-write", "use-default", "restricted")
+        if leaf in ("approval_policy", "approval", "permission_mode", "defaultmode"):
+            return value in ("never", "none", "off", "false", "disabled", "bypasspermissions", "bypass", "yolo", "allow-all")
+        if any(word in key for word in ("sandbox", "approval", "permission")):
+            if any(word in key for word in ("disable", "skip", "bypass", "dangerously")):
+                return value not in ("false", "off", "0")
+            return value in ("false", "off", "disabled", "danger-full-access", "bypasspermissions")
+        return False
+
+    for index, argument in enumerate(args):
+        flag, separator, attached = argument.partition("=")
+        value = attached if separator else args[index + 1] if index + 1 < len(args) else ""
+        if flag in UNSAFE_FLAGS or flag.startswith("--dangerously-"):
+            return argument
+        if flag in ("-a", "--ask-for-approval", "--approval-policy") and value.lower() in ("never", "none", "off"):
+            return argument
+        if flag in ("--sandbox", "-s") and value.lower() not in ("read-only", "workspace-write"):
+            return argument
+        if argument.startswith("-s") and not argument.startswith("--") and len(argument) > 2:
+            if argument[2:].lstrip("=").lower() == "danger-full-access":
+                return argument
+        if flag == "--permission-mode" and value.lower() in ("bypasspermissions", "bypass", "yolo"):
+            return argument
+        config = value if flag in ("-c", "--config") else argument[2:] if argument.startswith("-c") and not argument.startswith("--") else ""
+        if config and unsafe_setting(config):
+            return argument
+    return None
+
+
+def check_custom_safety(args: Sequence[str], allow_unsafe: bool, trust: Dict[str, Any], worker_id: str) -> None:
+    if allow_unsafe and not trust.get("allowUnsafe", False):
+        raise PlanError(f"worker {worker_id}: allowUnsafe requires the user to set trust.allowUnsafe: true in the saved user policy")
+    unsafe = unsafe_argument(args)
+    if unsafe and not allow_unsafe:
+        raise PlanError(f"worker {worker_id} uses an unsafe flag ({unsafe}); require allowUnsafe in the plan "
+                        "and user-authorized trust.allowUnsafe in the saved policy")
+
+
+def validate_custom(worker: Dict[str, Any], worker_id: str, trust: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     command = require_string(worker.get("command"), f"worker {worker_id}.command")
     args = worker.get("args", [])
     if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
@@ -2244,8 +2331,7 @@ def validate_custom(worker: Dict[str, Any], worker_id: str) -> Dict[str, Any]:
     allow_unsafe = worker.get("allowUnsafe", False)
     if not isinstance(allow_unsafe, bool):
         raise PlanError(f"worker {worker_id}.allowUnsafe must be a boolean")
-    if not allow_unsafe and any(arg in UNSAFE_FLAGS for arg in args):
-        raise PlanError(f"worker {worker_id} uses an unsafe flag without allowUnsafe")
+    check_custom_safety(args, allow_unsafe, trust or {}, worker_id)
     return {
         "command": command,
         "args": args,
@@ -2255,20 +2341,34 @@ def validate_custom(worker: Dict[str, Any], worker_id: str) -> Dict[str, Any]:
     }
 
 
+@functools.lru_cache(maxsize=1)
+def git_hooks_directory() -> tempfile.TemporaryDirectory:
+    return tempfile.TemporaryDirectory(prefix="alethe-empty-hooks-")
+
+
+def internal_git(cwd: Path, args: Sequence[str], input_bytes: Optional[bytes], timeout: float) -> subprocess.CompletedProcess:
+    environment = {key: value for key, value in os.environ.items()
+                   if key not in ("GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT")
+                   and not key.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))}
+    environment["GIT_CONFIG_NOSYSTEM"] = "1"
+    hooks = git_hooks_directory()
+    # check-ignore takes literal paths already and rejects pathspec magic.
+    literal = [] if args and args[0] == "check-ignore" else ["--literal-pathspecs"]
+    return subprocess.run(["git", *literal, "-c", "core.hooksPath=" + hooks.name,
+                           "-c", "core.fsmonitor=false", "-C", str(cwd), *args],
+                          input=input_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          timeout=timeout, check=False, env=environment)
+
+
 def run_git(
     cwd: Path, args: Sequence[str], input_bytes: Optional[bytes] = None, timeout: float = GIT_TIMEOUT_SECONDS
 ) -> bytes:
     try:
-        result = subprocess.run(
-            ["git", "--literal-pathspecs", "-C", str(cwd), *args],
-            input=input_bytes,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
-            check=False,
-        )
+        result = internal_git(cwd, args, input_bytes, timeout)
     except subprocess.TimeoutExpired as error:
         raise PlanError(f"git {' '.join(args)} timed out after {timeout:g}s") from error
+    except OSError as error:
+        raise PlanError(f"cannot run git; install or repair git: {error}") from error
     if result.returncode != 0:
         message = result.stderr.decode("utf-8", errors="replace").strip()
         raise PlanError(f"git {' '.join(args)} failed: {message}")
@@ -2283,14 +2383,14 @@ def is_inside(path: Path, root: Path) -> bool:
 
 
 def reject_seed_symlinks(path: Path) -> None:
-    if path.is_symlink():
+    if linked_path(path):
         raise PlanError(f"seed path is a symlink: {path}")
     if not path.is_dir():
         return
     for current, directories, files in os.walk(path, followlinks=False):
         for name in [*directories, *files]:
             candidate = Path(current) / name
-            if candidate.is_symlink():
+            if linked_path(candidate):
                 raise PlanError(f"seed path contains a symlink: {candidate}")
 
 
@@ -2310,14 +2410,42 @@ def exclude_worktrees(root: Path) -> None:
             handle.write(WORKTREE_EXCLUDE + "\n")
 
 
+def linked_path(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    try:
+        return bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400)
+    except FileNotFoundError:
+        return False
+
+
+def safe_destination(root: Path, target: Path) -> Path:
+    root = root.resolve()
+    target = target.absolute()
+    if not is_inside(target, root):
+        raise PlanError(f"destination escapes the repository: {target}; use a directory inside {root}")
+    try:
+        parts = target.relative_to(root).parts
+    except ValueError as error:
+        raise PlanError(f"destination must be under the repository: {target}") from error
+    current = root
+    for part in parts:
+        current = current / part
+        if linked_path(current):
+            raise PlanError(f"destination contains a symlink or junction: {current}; remove the link first")
+    return target.resolve()
+
+
 def prepare_worktree(worker: Dict[str, Any], run_id: str) -> Path:
     origin = Path(worker["cwd"])
     root = Path(run_git(origin, ["rev-parse", "--show-toplevel"]).decode().strip()).resolve()
     target = root / ".alethe" / "worktrees" / f"skill-{run_id}-{worker['id']}"
+    safe_destination(root, target)
     if target.exists():
         raise PlanError(f"worktree target already exists: {target}")
     exclude_worktrees(root)
     target.parent.mkdir(parents=True, exist_ok=True)
+    safe_destination(root, target)
     run_git(root, ["worktree", "add", "--detach", str(target), "HEAD"])
 
     try:
@@ -2334,6 +2462,7 @@ class WorktreeSeedError(PlanError):
 
 
 def seed_worktree(root: Path, target: Path, seed_paths: Sequence[str]) -> None:
+    safe_destination(root, target)
     if not seed_paths:
         return
     for relative in seed_paths:
@@ -2342,6 +2471,8 @@ def seed_worktree(root: Path, target: Path, seed_paths: Sequence[str]) -> None:
         if not is_inside(source, root):
             raise PlanError(f"seed path escapes the repository: {relative}")
         reject_seed_symlinks(source)
+        safe_destination(root, target / relative)
+        reject_seed_symlinks(target / relative)
     patch = run_git(root, ["diff", "--binary", "HEAD", "--", *seed_paths])
     if patch.strip():
         run_git(target, ["apply", "-"], patch)
@@ -2355,19 +2486,15 @@ def seed_worktree(root: Path, target: Path, seed_paths: Sequence[str]) -> None:
             raise PlanError(f"seed path escapes the repository: {relative}")
         reject_seed_symlinks(source)
         destination = target / relative
+        safe_destination(root, destination)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        safe_destination(root, destination)
         shutil.copy2(source, destination, follow_symlinks=False)
 
 
 def git_returncode(cwd: Path, args: Sequence[str]) -> int:
     try:
-        return subprocess.run(
-            ["git", "-C", str(cwd), *args],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=GIT_TIMEOUT_SECONDS,
-            check=False,
-        ).returncode
+        return internal_git(cwd, args, None, GIT_TIMEOUT_SECONDS).returncode
     except subprocess.TimeoutExpired as error:
         raise PlanError(f"git {' '.join(args)} timed out after {GIT_TIMEOUT_SECONDS:g}s") from error
 
@@ -2377,24 +2504,28 @@ def command_output(args: Sequence[str], cache: Dict[str, str], lock: threading.L
     with lock:
         if key in cache:
             return cache[key]
-    try:
-        result = subprocess.run(
-            list(args),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=15,
-            check=False,
-        )
-        output = result.stdout or ""
-    except (OSError, subprocess.TimeoutExpired):
-        output = ""
-    with lock:
-        cache[key] = output
-    return output
+    for _attempt in range(2):
+        try:
+            result = subprocess.run(
+                list(args),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+                check=False,
+                env=worker_environment(),
+            )
+            output = result.stdout or ""
+            if result.returncode == 0 and output.strip():
+                with lock:
+                    cache[key] = output
+                return output
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return ""
 
 
 def command_help(launch: Sequence[str], cache: Dict[str, str], lock: threading.Lock) -> str:
@@ -2486,10 +2617,15 @@ def build_invocation(
 
     if provider == "codex":
         launch = launch_command(resolve_executable("codex"))
-        features = command_output([*launch, "features", "list"], help_cache, help_lock)
+        help_text = command_help(launch, help_cache, help_lock)
+        if not help_text.strip():
+            raise PlanError("cannot read Codex --help; repair the CLI/help command before starting a worker")
+        features = command_output([*launch, "features", "list"], help_cache, help_lock) if "--disable" in help_text else ""
+        if "--disable" in help_text and not features.strip():
+            raise PlanError("cannot read Codex features list to disable nested agents; repair the CLI before starting a worker")
         args = list(launch)
         for feature in NESTED_AGENT_FEATURES:
-            if re.search(rf"^{feature}\s", features, re.MULTILINE):
+            if "--disable" in help_text and re.search(rf"^{feature}\s", features, re.MULTILINE):
                 args += ["--disable", feature]
         sandbox = "read-only" if mode == "read-only" else "workspace-write"
         args += ["exec", "--sandbox", sandbox]
@@ -2524,6 +2660,10 @@ def build_invocation(
             permission,
         ]
         help_text = command_help(launch, help_cache, help_lock)
+        if not help_text.strip():
+            raise PlanError("cannot read Claude --help for safety flags; repair the CLI/help command before starting a worker")
+        if "--setting-sources" in help_text:
+            args += ["--setting-sources", "user"]
         if "--permission-prompts" in help_text:
             args += ["--permission-prompts", "none"]
         if "--disable-slash-commands" in help_text:
@@ -2557,7 +2697,8 @@ def build_invocation(
             f"{timeout}s",
         ]
         help_text = command_help(launch, help_cache, help_lock)
-        if "--disable-slash-commands" in help_text:
+        # agy 1.4.9 ignores --mode plan when slash expansion is disabled.
+        if mode != "read-only" and "--disable-slash-commands" in help_text:
             args.append("--disable-slash-commands")
         if "--add-dir" in help_text:
             args += ["--add-dir", str(cwd)]
@@ -2589,14 +2730,20 @@ def build_invocation(
         for marker, replacement in replacements.items():
             value = value.replace(marker, replacement)
         custom_args.append(value)
+    check_custom_safety(custom_args, worker.get("allowUnsafe", False), worker.get("trust", {}), worker.get("id", "?"))
     stdin_prompt = worker["promptTransport"] == "stdin"
     if not stdin_prompt:
         custom_args.append(worker["task"])
     return [*launch, *custom_args], stdin_prompt, worker["outputFormat"], result_path
 
 
-def worker_environment() -> Dict[str, str]:
-    environment = {key: value for key, value in os.environ.items() if key != "CLAUDECODE"}
+def worker_environment(provider: str = "custom", trust: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+    prefixes = {"claude": ("ANTHROPIC_", "CLAUDE_CODE_"), "codex": ("OPENAI_", "CODEX_"),
+                "agy": ("GEMINI_", "GOOGLE_"), "kimi": ("MOONSHOT_", "KIMI_")}.get(provider, ())
+    allowed = {name.upper() for name in (trust or {}).get("workerEnv", [])}
+    environment = {key: value for key, value in os.environ.items() if key != "CLAUDECODE" and (
+        not re.search(r"(?:^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIALS)$", key, re.IGNORECASE)
+        or key.upper().startswith(prefixes) or key.upper() in allowed)}
     environment[WORKER_ENV_FLAG] = "1"
     return environment
 
@@ -2744,12 +2891,46 @@ def stop_windows_pid(pid: int) -> None:
         kernel.CloseHandle(handle)
 
 
-def stop_recorded_pid(pid: Any) -> None:
+def process_start_time(pid: int) -> Optional[str]:
+    """Return an OS process identity, never an inference from PID liveness."""
+    try:
+        if sys.platform.startswith("linux"):
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            return f"{boot}:{fields[19]}"
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel = windows_kernel()
+            handle = kernel.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return None
+            try:
+                get_times = kernel.GetProcessTimes
+                get_times.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+                get_times.restype = wintypes.BOOL
+                times = [wintypes.FILETIME() for _ in range(4)]
+                if not get_times(handle, *(ctypes.byref(value) for value in times)):
+                    return None
+                return str((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
+            finally:
+                kernel.CloseHandle(handle)
+        result = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
+                                text=True, timeout=2, check=False, env={**os.environ, "LC_ALL": "C"})
+        return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def stop_recorded_pid(pid: Any, identity: Optional[str] = None) -> bool:
     if not pid_alive(pid) or pid == os.getpid():
-        return
+        return True
+    if not isinstance(identity, str) or not identity or process_start_time(pid) != identity:
+        return False
     if os.name == "nt":
         stop_windows_pid(pid)
-        return
+        return True
     try:
         os.killpg(pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -2757,6 +2938,7 @@ def stop_recorded_pid(pid: Any) -> None:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+    return True
 
 
 def effective_run_state(state: Dict[str, Any]) -> Dict[str, Any]:
@@ -2981,6 +3163,8 @@ def result_text_from_values(values: Sequence[Any]) -> str:
     if chunks:
         return "\n".join(chunks).strip()
     for value in reversed(values):
+        if isinstance(value, dict) and value.get("type") in ("rate_limit_event", "system"):
+            continue
         text = text_from_value(value)
         if text:
             return text
@@ -3069,12 +3253,14 @@ def classify_result(
         return "failed", text, values, "worker output was not valid structured JSON"
     if provider in ("claude", "agy") and values:
         final = next((value for value in reversed(values) if not isinstance(value, dict)
-                      or value.get("type") != "rate_limit_event"), None)
+                      or value.get("type") not in ("rate_limit_event", "system")), None)
         if isinstance(final, dict):
             if final.get("is_error") is True or str(final.get("subtype", "")).startswith("error"):
                 error = f"worker returned {final.get('subtype', 'an error result')}"
             if provider == "claude" and final.get("type") != "result":
                 error = "Claude output did not end with a result object"
+    if not text and extract_details(values)["permissionDenials"]:
+        error = "permission denied: worker produced no result after denied actions"
     if error:
         return "failed", text, values, error
     if not text:
@@ -3205,12 +3391,11 @@ def extract_details(values: Sequence[Any]) -> Dict[str, List[str]]:
     for value in values:
         if not isinstance(value, dict):
             continue
-        raw = value.get("permission_denials")
-        if isinstance(raw, list):
-            denials = [
-                str(item.get("tool_name") or item.get("toolName") or "tool") if isinstance(item, dict) else "tool"
-                for item in raw
-            ]
+        for raw in (value.get("permission_denials"), value.get("denied_actions")):
+            if isinstance(raw, list):
+                denials.extend(str(item.get("tool_name") or item.get("toolName") or item.get("display_name")
+                                   or item.get("action") or item.get("tool") or "tool") if isinstance(item, dict)
+                              else item if isinstance(item, str) else "tool" for item in raw)
         usage = value.get("modelUsage")
         if isinstance(usage, dict) and usage:
             billed = sorted(str(key) for key in usage)
@@ -3470,6 +3655,7 @@ def run_worker(
         "finishedAt": None,
         "durationSeconds": 0.0,
         "cwd": worker["cwd"],
+        "originCwd": worker["cwd"],
         "worktree": None,
         "resultPath": None,
         "stdoutPath": None,
@@ -3564,10 +3750,12 @@ def run_worker(
                     checkouts.leave(root, worker_id)
                 tracker.finish(worker_id, {})
                 return settle(status="skipped", error="stopped on request", failureKind="stopped")
-            process = start_process(args, cwd, stdin_mode, stdout_file, stderr_file, worker_environment())
+            process = start_process(args, cwd, stdin_mode, stdout_file, stderr_file,
+                                    worker_environment(worker["provider"], worker.get("trust")))
             registry.add(process)
             outcome["pid"] = process.pid
-            state.update_worker(worker_id, {"pid": process.pid})
+            outcome["processStartTime"] = process_start_time(process.pid)
+            state.update_worker(worker_id, {"pid": process.pid, "processStartTime": outcome["processStartTime"]})
             if stdin_prompt and process.stdin is not None:
                 feed_stdin(process.stdin, worker["task"].encode("utf-8"))
             exit_code, ended = watch_process(
@@ -3584,6 +3772,8 @@ def run_worker(
             error = f"worker printed nothing for {worker['idleTimeoutSeconds']}s"
         metrics = extract_metrics(values)
         details = extract_details(values)
+        if not result_text and details["permissionDenials"] and status == "failed":
+            error = "permission denied: " + ", ".join(details["permissionDenials"])
         handoff = parse_handoff(result_text)
         kind, reset_hint = classify_failure(status, error, stderr_path, result_text, ended == "stalled")
         if ended == "stopped":
@@ -3876,21 +4066,137 @@ def read_journal(folder: Optional[Path]) -> List[Dict[str, Any]]:
 
 def stop_payload(folder: Path) -> Dict[str, Any]:
     running = []
+    unverified = []
     for run_dir in wave_dirs(folder):
         state = read_optional_json(run_dir / "state.json")
         if not isinstance(state, dict) or state.get("status") not in ("running", "interrupted"):
             continue
+        if not isinstance(state.get("workers"), dict) or any(not isinstance(entry, dict) for entry in state["workers"].values()):
+            raise PlanError(f"invalid worker state in {run_dir / 'state.json'}; repair it before stopping recorded PIDs")
         atomic_write_text(run_dir / STOP_FILE, now_iso() + "\n")
-        for entry in state.get("workers", {}).values():
-            stop_recorded_pid(entry.get("pid"))
+        for worker_id, entry in state.get("workers", {}).items():
+            if entry.get("status") in (*RAN_STATUSES, "skipped"):
+                continue
+            outcome_path = run_dir / "workers" / worker_id / "outcome.json"
+            outcome = read_optional_json(outcome_path)
+            if outcome_path.exists() and not isinstance(outcome, dict):
+                unverified.append(entry.get("pid"))
+                continue
+            if isinstance(outcome, dict) and outcome.get("status") in (*RAN_STATUSES, "skipped"):
+                continue
+            if not stop_recorded_pid(entry.get("pid"), entry.get("processStartTime")):
+                unverified.append(entry.get("pid"))
         if effective_run_state(state)["status"] == "interrupted":
             atomic_write_json(run_dir / "state.json", effective_run_state(state))
         running.append(str(run_dir))
     return {
         "folder": str(folder),
         "stopping": running,
-        "note": "running workers stop within seconds and queued ones are skipped" if running else "nothing is running",
+        "unverifiedPids": unverified,
+        "note": ("stop requested; unverified PIDs were not signalled" if unverified else
+                 "running workers stop within seconds and queued ones are skipped" if running else "nothing is running"),
     }
+
+
+def cleanup_refusal(folder: Path, cutoff: float, protected: Sequence[Path]) -> Optional[str]:
+    if linked_path(folder):
+        return "linked directory"
+    if any(is_inside(folder, current) or is_inside(current, folder) for current in protected):
+        return "current orchestration"
+    if any(child.is_dir() and re.match(r"^\d{2,}-", child.name) and not (child / "state.json").is_file()
+           for child in folder.iterdir()):
+        return "unverified wave"
+    final = (*RAN_STATUSES, "skipped", "done")
+    for run in wave_dirs(folder):
+        if linked_path(run):
+            return "linked wave"
+        state = read_optional_json(run / "state.json")
+        if not isinstance(state, dict) or state.get("status") not in final:
+            return "unfinished wave"
+        workers = state.get("workers")
+        if not isinstance(workers, dict):
+            return "unverified workers"
+        for worker_id, worker in workers.items():
+            if not isinstance(worker, dict) or worker.get("status") not in final:
+                return "unfinished worker"
+            outcome_path = run / "workers" / worker_id / "outcome.json"
+            outcome = read_optional_json(outcome_path)
+            if outcome_path.exists() and not isinstance(outcome, dict):
+                return "unverified worker outcome"
+            outcome = outcome or {}
+            worktree = outcome.get("worktree") or worker.get("worktree")
+            if worktree:
+                if not isinstance(worktree, str) or Path(worktree).exists():
+                    return "open worktree"
+                # A missing directory may still be registered in git. Legacy records
+                # without the origin cannot prove that it has been removed.
+                origin = outcome.get("originCwd") or worker.get("originCwd")
+                if not isinstance(origin, str) or not Path(origin).is_dir():
+                    return "unverified worktree"
+                try:
+                    registered = run_git(Path(origin), ["worktree", "list", "--porcelain"]).decode("utf-8", errors="replace")
+                except PlanError:
+                    return "unverified worktree"
+                if any(line.startswith("worktree ") and Path(line[9:]).resolve() == Path(worktree).resolve()
+                       for line in registered.splitlines()):
+                    return "open worktree"
+    latest = folder.stat().st_mtime
+    def unreadable(error: OSError) -> None:
+        raise error
+
+    for directory, directories, files in os.walk(folder, followlinks=False, onerror=unreadable):
+        for name in [*directories, *files]:
+            path = Path(directory) / name
+            latest = max(latest, path.lstat().st_mtime)
+            if linked_path(path) and path.is_dir():
+                return "linked directory"
+    return "newer than cutoff" if latest >= cutoff else None
+
+
+def cleanup_current_folders(home: Path) -> List[Path]:
+    protected = []
+    for pointer in [home / CURRENT_FILE, *(home / "current").glob("*.json")]:
+        if not pointer.exists():
+            continue
+        value = read_optional_json(pointer)
+        if not isinstance(value, dict) or not isinstance(value.get("folder"), str) or not value["folder"]:
+            raise PlanError(f"cannot verify current orchestration pointer {pointer}; repair or remove it before clean")
+        protected.append(Path(value["folder"]).resolve())
+    return protected
+
+
+def clean_payload(older_than: float, yes: bool) -> Dict[str, Any]:
+    if not math.isfinite(older_than) or older_than < 0:
+        raise PlanError("--older-than must be a nonnegative number of days")
+    home = orchestrations_home().resolve()
+    protected = cleanup_current_folders(home)
+    candidates = list(home.iterdir()) if home.is_dir() else []
+    candidates += list(Path(tempfile.gettempdir()).glob("alethe-orchestrate-*"))
+    cutoff = time.time() - older_than * 86400
+    eligible, deleted, skipped = [], [], []
+    for folder in sorted(set(candidates)):
+        if not folder.is_dir() or not ((folder / ORCHESTRATION_FILE).is_file() or (folder / "state.json").is_file()):
+            continue
+        try:
+            refusal = cleanup_refusal(folder, cutoff, protected)
+            if refusal:
+                skipped.append({"folder": str(folder), "reason": refusal})
+                continue
+            eligible.append(str(folder))
+            if yes:
+                # Check again immediately before deletion; active/current folders
+                # remain protected even when their state changed during the scan.
+                protected.extend(cleanup_current_folders(home))
+                refusal = cleanup_refusal(folder, cutoff, protected)
+                if refusal:
+                    skipped.append({"folder": str(folder), "reason": refusal})
+                    continue
+                shutil.rmtree(folder)
+                deleted.append(str(folder))
+        except OSError as error:
+            skipped.append({"folder": str(folder), "reason": str(error)})
+    return {"olderThanDays": older_than, "candidates": eligible, "deleted": deleted, "skipped": skipped,
+            "note": "deleted eligible folders" if yes else "preview only; pass --yes to delete"}
 
 
 def report_target(paths: Sequence[Path]) -> Tuple[List[Path], Optional[Path]]:
@@ -4615,11 +4921,6 @@ def plan_warnings(plan: Dict[str, Any]) -> List[str]:
             warnings.append(
                 f"{name} runs on {worker['provider']}'s default model, which may be its most expensive; set a tier or a model"
             )
-        if worker["provider"] == "kimi" and worker["mode"] == "read-only":
-            warnings.append(
-                f"{name}: Kimi runs prompts with every permission, so read-only rests on the worker contract; "
-                "the runner checks the checkout afterwards"
-            )
         if worker["provider"] == "kimi" and worker["mode"] == "write" and not worker["isolate"]:
             warnings.append(f"{name}: Kimi writes without asking; give it isolate: true")
         if (
@@ -4684,7 +4985,9 @@ def detach_run(
 ) -> Dict[str, Any]:
     if os.environ.get(WORKER_ENV_FLAG):
         raise PlanError("this process is an orchestration worker, and workers cannot start orchestrations")
-    plan = validate_plan(read_json(plan_path), plan_path.resolve(), load_policy(policy_path), strategy)
+    orchestration = run_dir.parent if run_dir and (run_dir.parent / ORCHESTRATION_FILE).is_file() else None
+    plan = validate_plan(read_json(plan_path), plan_path.resolve(), load_policy(policy_path), strategy,
+                         policy_path, orchestration)
     if not allow_low_quota:
         refuse_low_quota(plan["workers"], policy_path)
     target = (run_dir or default_run_dir()).expanduser().resolve()
@@ -4751,9 +5054,9 @@ def run_batch(
 ) -> int:
     if os.environ.get(WORKER_ENV_FLAG):
         raise PlanError("this process is an orchestration worker, and workers cannot start orchestrations")
-    plan = validate_plan(
-        read_json(plan_path), plan_path.resolve(), load_policy(policy_path), strategy_override, policy_path
-    )
+    orchestration = requested_run_dir.parent if requested_run_dir and (requested_run_dir.parent / ORCHESTRATION_FILE).is_file() else None
+    plan = validate_plan(read_json(plan_path), plan_path.resolve(), load_policy(policy_path),
+                         strategy_override, policy_path, orchestration)
     if not (allow_low_quota or background):
         refuse_low_quota(plan["workers"], policy_path)
     started = dt.datetime.now(dt.timezone.utc)
@@ -4795,6 +5098,7 @@ def run_batch(
             "provider": worker["provider"],
             "status": "queued",
             "cwd": worker["cwd"],
+            "originCwd": worker["cwd"],
             "worktree": None,
         }
         for worker in plan["workers"]
@@ -6089,6 +6393,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     note_parser.add_argument("--in", dest="into", type=Path, metavar="FOLDER")
     stop_parser = subparsers.add_parser("stop", help="stop the running waves of an orchestration")
     stop_parser.add_argument("folder", nargs="?", type=Path)
+    clean_parser = subparsers.add_parser("clean", help="preview or delete old, completed orchestration folders and runs")
+    clean_parser.add_argument("--older-than", type=float, default=14, metavar="DAYS")
+    clean_parser.add_argument("--yes", action="store_true", help="delete eligible folders")
     mode_parser = subparsers.add_parser(
         "mode", help="keep orchestration on for a project, with a goal, care level and the user's standing rules"
     )
@@ -6251,6 +6558,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         if args.command == "stop":
             print(json.dumps(stop_payload(resolve_folder(args.folder)), indent=2))
+            return 0
+        if args.command == "clean":
+            print(json.dumps(clean_payload(args.older_than, args.yes), indent=2))
             return 0
         if args.command == "budget":
             updates = {
