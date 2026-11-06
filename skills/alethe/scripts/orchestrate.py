@@ -1381,7 +1381,8 @@ def probe_claude_quota(policy_path: Path) -> Optional[Dict[str, Any]]:
 def probe_agy_quota(policy_path: Path) -> Optional[Dict[str, Any]]:
     launch = launch_command(resolve_executable("agy"))
     args = [*launch, "-p", "/usage", "--output-format", "json", "--print-timeout", f"{AGY_PROBE_SECONDS}s"]
-    with tempfile.TemporaryDirectory(prefix="alethe-usage-") as folder:
+    folder = tempfile.mkdtemp(prefix="alethe-usage-")
+    try:
         try:
             completed = subprocess.run(args, stdin=subprocess.DEVNULL, cwd=Path(folder),
                 env=worker_environment("agy", load_policy(policy_path)["trust"]), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -1390,6 +1391,9 @@ def probe_agy_quota(policy_path: Path) -> Optional[Dict[str, Any]]:
             raise PlanError(f"Antigravity did not answer within {AGY_PROBE_SECONDS} seconds") from error
         except OSError as error:
             raise PlanError(f"could not start Antigravity: {error}") from error
+    finally:
+        # On Windows agy can keep the folder busy for a moment; a leftover empty temp folder must not fail the probe.
+        shutil.rmtree(folder, ignore_errors=True)
     quota = agy_quota(json_values(completed.stdout.decode("utf-8", errors="replace"), "json"), now_iso())
     save_usage(policy_path, quota)
     return quota
