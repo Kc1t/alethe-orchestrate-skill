@@ -30,6 +30,42 @@ Fixed:
   again. The earlier total is read from the same orchestration folder; when it is not there the reported value is
   kept (never lower) and `resumeIncrement` in `outcome.json` is `unconfirmed`. Other providers are not adjusted.
 
+## 24 (2026-11-04)
+
+Fixed:
+
+- Claude final-result selection ignores trailing system/task-summary and rate-limit events,
+  preserving success and error outcomes (#3).
+- Agy read-only plan mode keeps slash expansion; denied actions reach `permissionDenials` and
+  empty denied responses are permission failures. Reviewers receive a diff file for shell-free
+  inspection (#5).
+- Custom commands detect unsafe flag/value, equals, short-form and config overrides, including
+  after placeholder substitution (#7).
+- Unreadable Claude/Codex safety help retries once, is never cached, and refuses worker launch.
+  Worker environments filter unrelated secrets; Claude uses only user settings when supported (#8).
+- `stop` skips final workers and verifies recorded OS process start times before signalling;
+  unverifiable/legacy PIDs are reported without being killed (#11).
+- Worktree and seed destinations reject symlink/junction escapes; every internal git call disables
+  hooks and fsmonitor and ignores inherited `GIT_CONFIG_*` overrides. Editor trace labels render as text (#11).
+
+Changed:
+
+- Kimi/custom `mode: read-only` is refused: choose Codex, Claude or Agy, or use `mode: write`
+  with `isolate: true` for a disposable worktree (#6).
+- Worker `cwd` is confined to the invoking checkout (or invoking directory outside git); the user
+  can allow additional absolute `trust.cwdRoots` in the saved policy. `taskFile` must resolve
+  within the plan directory or orchestration folder; copy external briefs there (#8).
+- Plan `allowUnsafe: true` now also requires user-authorized `trust.allowUnsafe: true` in the saved
+  policy. A plan cannot grant trust; only explicit user instructions may change it (#7).
+
+Added:
+
+- Validated saved-policy `trust` settings: `allowUnsafe`, `cwdRoots` and `workerEnv`, all off/empty
+  by default (#7, #8).
+- `clean [--older-than DAYS] [--yes]` previews old completed orchestration folders and temporary
+  runs (14 days by default), deleting only on request and retaining all current sessions,
+  unfinished waves and open or unverifiable worktrees (#11).
+
 ## 23 (2026-11-03)
 
 Added:

@@ -105,6 +105,9 @@ class PlaybookSettingsTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         # Resolve so Windows 8.3 short names (RUNNER~1) match the long paths the runner reports.
         self.root = Path(self.temporary.name).resolve()
+        previous_cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous_cwd)
         self.policy = self.root / "policy.json"
         self.playbooks = self.root / runner.USER_PLAYBOOKS_FILE
         self.bundled = runner.bundled_playbooks_path().read_text(encoding="utf-8")
@@ -118,7 +121,7 @@ class PlaybookSettingsTest(unittest.TestCase):
 
     def call(self, *args):
         output, errors = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), mock.patch.object(
+        with mock.patch.object(runner, "checkout_root", return_value=None), contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors), mock.patch.object(
             runner.subprocess, "Popen", side_effect=AssertionError("tests must not launch a CLI"),
         ):
             code = runner.main([str(arg) for arg in args])

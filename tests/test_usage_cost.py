@@ -21,6 +21,9 @@ class UsageCostTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="usage-cost-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        previous_cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous_cwd)
         self.policy = self.root / "policy.json"
         self.codex = self.root / "codex"
         self.codex.mkdir()

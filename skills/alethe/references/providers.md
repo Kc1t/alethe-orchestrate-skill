@@ -22,7 +22,9 @@ are switched only when `providerSwitch` is `automatic`; otherwise they are honor
 asks for a decision.
 
 The runner probes optional flags from local help where needed. CLI behavior changes over time, so
-check the generated `stderr.log` and `outcome.json` rather than treating process exit alone as
+unreadable Claude/Codex safety help refuses the worker (retry or repair the CLI). Readable help
+without an optional flag keeps compatibility. Claude uses `--setting-sources user` when available
+to exclude repository settings, hooks and allow rules. Check the generated `stderr.log` and `outcome.json` rather than treating process exit alone as
 success.
 
 The equivalent new-session command shapes are:
@@ -43,7 +45,7 @@ external deadline even when a provider also offers its own timeout.
 ## What the runner turns off
 
 - **Subagents.** Codex workers run with its `multi_agent` features disabled and Claude workers with
-  the `Agent` and `Workflow` tools denied, so neither can fan out on its own. Agy, Kimi and custom
+  the `Agent` and `Workflow` tools denied when the installed CLIs advertise those flags. Agy, Kimi and custom
   workers rely on the worker contract. Every worker also runs with `ALETHE_ORCHESTRATE_WORKER=1`,
   and `run` refuses to start inside a worker.
 - **MCP servers.** Codex gets an empty `mcp_servers` table and Claude `--strict-mcp-config`, so
@@ -60,12 +62,14 @@ permission handling when the installed CLI supports it; a denied command shows u
 run.
 
 Kimi's prompt mode always runs in Kimi's auto permission mode, which approves every tool, and it
-refuses `--plan`, `--yolo` and `--auto` together with `--prompt`. So read-only Kimi work rests on the
-worker contract alone, checked afterwards by the read-only tripwire, and a Kimi writer belongs in an
-isolated worktree. `validate` warns about both.
+refuses `--plan`, `--yolo` and `--auto` together with `--prompt`. A Kimi `mode: read-only` worker
+is therefore refused. Choose Codex, Claude or Agy, or use `mode: write` with `isolate: true`
+for a disposable worktree.
 
-If an Agy read-only worker returns nothing, its plan mode may have stopped at a command it could
-not approve without a person; give that read to Codex or Claude.
+Agy read-only reviewers cannot run shell commands: give them the diff as a file to read. The
+runner keeps slash expansion enabled in plan mode because agy 1.4.9 ignores `--mode plan` without
+it. Denied actions appear as `permissionDenials`; an empty denied response is a permission failure.
+Use Codex or Claude when a read-only unit needs shell commands.
 
 ## Windows
 
@@ -112,16 +116,18 @@ Use `provider: "custom"` with:
 - `promptTransport`: `stdin` or `argument`
 - `outputFormat`: `text`, `json`, or `jsonl`
 
-Custom adapters do not automatically claim read-only, resume, token, or quota support. Enforce
-provider-specific restrictions in its arguments and use an isolated worktree when it can write.
+Custom adapters have no verified read-only support: `mode: read-only` is refused. Use a capable
+built-in provider, or `mode: write` with `isolate: true` for a disposable worktree. Enforce
+provider-specific restrictions in arguments; custom adapters do not claim resume, token or quota support.
 Onboarding records each checked adapter in the playbooks file under `adapters`; build the worker
 from that entry.
 
 Give a custom CLI the narrowest tool permission that still lets it write, such as Kiro's
 `--trust-tools=fs_read,fs_write` or Copilot's `--allow-tool write`. Known unsafe flags, including
 ones that approve every tool such as `--trust-all-tools`, `--allow-all-tools` and `--yolo`, are
-rejected unless `allowUnsafe` is true. Set that field only after the user explicitly authorizes the
-loss of isolation.
+rejected unless both plan `allowUnsafe: true` and saved policy `trust.allowUnsafe: true` are set.
+Only the user can authorize the policy exception; the plan cannot grant it. Checks include
+flag/value pairs, `--flag=value`, config overrides and substituted arguments.
 
 ## Unsupported MCP features
 

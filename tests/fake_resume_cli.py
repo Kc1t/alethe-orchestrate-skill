@@ -19,6 +19,8 @@ def value_after(flag):
 
 def main() -> int:
     if "--help" in sys.argv:
+        print("--disable --disallowedTools --strict-mcp-config --max-budget-usd "
+              "--permission-prompts --setting-sources --disable-slash-commands --add-dir")
         return 0
     mode = sys.argv[1]
     if mode == "claude":

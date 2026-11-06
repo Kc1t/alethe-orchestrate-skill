@@ -1,9 +1,9 @@
 ---
 name: alethe
 description: Orchestrate bounded Codex, Claude Code, Agy, Kimi, or custom CLI workers to finish work with the least lead context and provider usage, following playbooks such as plan big, execute small. Use when the user asks to orchestrate, delegate, compare agents, conserve agent tokens or quota, recover a worker, report what an orchestration did and cost, or work without MCP or Python, when the user types /alethe or a short command such as "alethe report" or "alethe stop", and when they want it on from now on, at any point of a task and alongside other skills. Also use it proactively, without being asked, when a request is large enough to split into bounded independent units, such as a multi-file refactor, a migration, an audit or research across many files. Default passive mode watches session spend and quota and delegates cheaper bounded units; spend reports the lead session. Keep small work with the lead.
-argument-hint: "[task or standing instruction] | on | off | passive | spend | save | max | freestyle | careful | report | status | usage | models | editor | list | stop | skip <phase> | switch <playbook> | freeform | budget <limit> | mark <worker> <used|partial|discarded> | setup | help"
+argument-hint: "[task or standing instruction] | on | off | passive | spend | save | max | freestyle | careful | report | status | usage | models | editor | list | stop | clean | skip <phase> | switch <playbook> | freeform | budget <limit> | mark <worker> <used|partial|discarded> | setup | help"
 metadata:
-  version: "23"
+  version: "24"
 ---
 
 # Orchestrate CLI workers
@@ -85,6 +85,7 @@ action. Run-specific commands without a folder use the current orchestration: th
 | `editor`, or "show the playbooks" | `editor`, which writes the playbooks as a flow page and opens it; without Python, fill `assets/editor.html` as in [references/manual.md](references/manual.md) |
 | `list` | `list`; `use <folder>` makes one of them current again |
 | `stop` | `stop`, then `status` once the waves have ended |
+| `clean [--older-than DAYS] [--yes]` | preview completed folders older than 14 days; delete only with `--yes` |
 | `budget <limit>` | `budget --max-calls N`, `--max-reported-cost-usd C` or `--max-reported-tokens T` |
 | `skip <phase>`, `switch <playbook>`, `freeform`, `add <phase>` | change course as below |
 | `note <text>` | `note "<text>"` |
@@ -328,14 +329,20 @@ forbidden changes, and desired handoff. The runner automatically appends these i
 - finish with a `STATUS:` line (`DONE`, `DONE_WITH_CONCERNS`, `BLOCKED` or `NEEDS_CONTEXT`) and a
   `SUMMARY:` line
 
-Codex and Claude workers cannot start subagents: the runner turns that off in the CLI. Every
-worker runs with `ALETHE_ORCHESTRATE_WORKER=1`, so it cannot start an orchestration of its own. A
+The runner blocks Codex and Claude subagents when their CLIs advertise the required flags. Every
+worker runs with `ALETHE_ORCHESTRATE_WORKER=1`; the runner refuses nested orchestration, though a
+worker with shell access can unset this advisory guard. A
 worker's status and summary are claims; check its diff. For review, validation, judge and panel
 briefs, follow [references/briefs.md](references/briefs.md).
 
 Do not put secrets in plans, tasks, arguments, or logs. Do not use bypass flags unless the user
 explicitly requested that loss of isolation; custom workers require `allowUnsafe: true` for known
-unsafe flags.
+unsafe flags and `trust.allowUnsafe: true` in the saved user policy. Read-only Kimi/custom
+workers are refused; use Codex, Claude or Agy, or `mode: write` with `isolate: true`. Worker `cwd`
+must stay in the invoking checkout (or directory outside git), unless the user allows
+`trust.cwdRoots`; task files stay inside the plan directory or orchestration folder.
+The lead never writes `trust` itself; only the user does, or the lead after the user explicitly
+asks for that exact change.
 
 ## Token discipline
 

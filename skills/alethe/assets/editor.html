@@ -2055,13 +2055,13 @@ function traceSection(graph) {
     const { final, base, chosen, switched, stuck, spent } = n.resolved
     const line = h('div')
     const reasons = []
-    if (chosen) reasons.push(`<span class="ok">because ${condText(chosen.cond)}</span>`)
-    if (switched) reasons.push(`<span class="warn">${AGENTS[base.provider]} low, moved to ${AGENTS[final.provider]}</span>`)
-    if (stuck) reasons.push('<span class="warn">no provider with tokens left</span>')
-    if (spent) reasons.push(`<span class="ok">${AGENTS[spent]} quota would be lost, spent on ${final.tier}</span>`)
-    if (final.via) reasons.push(`through ${ROUTES[final.via]?.label ?? final.via}`)
-    const why = reasons.length ? ` · ${reasons.join(' · ')}` : ''
-    line.innerHTML = `<b>${n.title}</b>${n.lead ? ' (your session)' : ''}${n.workers > 1 ? ` ×${n.workers}` : ''} → ${modelName(final.provider, final.model)} · ${final.effort ?? 'default'}${why}`
+    if (chosen) reasons.push(h('span', { className: 'ok', textContent: `because ${condText(chosen.cond)}` }))
+    if (switched) reasons.push(h('span', { className: 'warn', textContent: `${AGENTS[base.provider]} low, moved to ${AGENTS[final.provider]}` }))
+    if (stuck) reasons.push(h('span', { className: 'warn', textContent: 'no provider with tokens left' }))
+    if (spent) reasons.push(h('span', { className: 'ok', textContent: `${AGENTS[spent]} quota would be lost, spent on ${final.tier}` }))
+    if (final.via) reasons.push(h('span', { textContent: `through ${ROUTES[final.via]?.label ?? final.via}` }))
+    line.append(h('b', { textContent: n.title }), document.createTextNode(`${n.lead ? ' (your session)' : ''}${n.workers > 1 ? ` ×${n.workers}` : ''} → ${modelName(final.provider, final.model)} · ${final.effort ?? 'default'}`))
+    reasons.forEach((reason) => line.append(document.createTextNode(' · '), reason))
     trace.append(line)
   })
   if (sim.bothLow) {

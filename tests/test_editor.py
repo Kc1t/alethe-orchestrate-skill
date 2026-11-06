@@ -54,6 +54,45 @@ class EditorTest(unittest.TestCase):
         self.assertEqual(page.count(runner.EDITOR_PRICES_SLOT), 1)
         self.assertNotRegex(page, r'<(?:script|link|img)[^>]+(?:src|href)="https?:')
 
+    @unittest.skipUnless(NODE, "JavaScript DOM fixture requires Node")
+    def test_trace_renders_untrusted_titles_models_and_reasons_as_text(self):
+        source = TEMPLATE.read_text(encoding="utf-8")
+        function = source.split("function traceSection(graph) {", 1)[1].split("function renderPanel", 1)[0]
+        attack = '<img src=x onerror="throw new Error(1)">'
+        javascript = r'''
+const attack = ATTACK;
+class Element {
+  constructor(tag, props = {}, children = []) { this.tag = tag; Object.assign(this, props); this.children = children; }
+  append(...children) { this.children.push(...children); }
+  set innerHTML(value) { throw new Error('untrusted HTML rendered'); }
+}
+const h = (tag, props, children = []) => new Element(tag, props, children);
+const document = { createTextNode: (textContent) => new Element('#text', { textContent }) };
+const AGENTS = { p: attack }, ROUTES = { r: { label: attack } };
+const state = { providers: [], budget: 'normal', task: 'task', checks: 'checks', spent: 'spent' };
+const TASKS = { task: { label: 'task' } }, USAGE_PRESETS = {}, CHECKS = { checks: 'checks' }, SPENT = { spent: 'spent' };
+const usageKey = () => 'custom', condText = () => attack, modelName = (provider, model) => model;
+const spareOf = () => null;
+function traceSection(graph) { FUNCTION
+const node = { type: 'role', id: 'a', title: attack, workers: 1, resolved: {
+  final: { provider: 'p', model: attack, effort: attack, via: 'r', tier: attack },
+  base: { provider: 'p' }, chosen: { cond: {} }, switched: true, stuck: true, spent: 'p'
+}};
+console.log(JSON.stringify(traceSection({ nodes: [node], sim: { reached: new Set(['a']) } })));
+'''.replace("ATTACK", json.dumps(attack)).replace("FUNCTION", function)
+        result = subprocess.run([NODE, "-e", javascript], capture_output=True, text=True, check=True)
+        tree = json.loads(result.stdout)
+        texts = []
+
+        def visit(node):
+            self.assertIn(node["tag"], ("div", "span", "b", "h4", "#text"))
+            texts.append(node.get("textContent", ""))
+            for child in node["children"]:
+                visit(child)
+
+        visit(tree)
+        self.assertGreaterEqual(sum(attack in text for text in texts), 5)
+
     def test_editor_embeds_the_effective_playbooks_and_live_quota_without_opening(self):
         now = dt.datetime.now(dt.timezone.utc)
         runner.save_usage(self.policy, {"provider": "claude", "source": "fixture", "observedAt": now.isoformat(), "windows": {

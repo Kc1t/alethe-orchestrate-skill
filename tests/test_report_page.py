@@ -24,6 +24,9 @@ class ReportPageTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(prefix="report-page-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
+        previous = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous)
         patcher = mock.patch.dict(os.environ, {
             "CODEX_HOME": str(self.root / "codex"),
             "ALETHE_ORCHESTRATE_POLICY": str(self.root / "policy.json"),

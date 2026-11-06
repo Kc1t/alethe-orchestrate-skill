@@ -62,7 +62,14 @@ class Fixtures(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="orchestrate-test-"))
         self.addCleanup(remove_tree, self.root)
+        previous_cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous_cwd)
         self.policy = self.root / "policy.json"
+        # This fake adapter implements the read-only contract for tripwire/batch tests.
+        capability = mock.patch.dict(orchestrate.PROVIDER_CAPABILITIES["custom"], {"readOnly": True})
+        capability.start()
+        self.addCleanup(capability.stop)
         self.home = self.root / "home"
         patcher = mock.patch.dict(os.environ, {"ALETHE_ORCHESTRATE_HOME": str(self.home)})
         patcher.start()
@@ -183,6 +190,8 @@ class RunnerTest(Fixtures):
             self.assertIn("unsafe flag", err)
         allowed = self.worker("a", "write", ["--yolo"], "text", self.root, allowUnsafe=True)
         plan = self.write_plan("allowed", {"version": 1, "workers": [allowed]})
+        self.assertEqual(self.call("validate", plan, "--policy", self.policy)[0], 2)
+        orchestrate.save_policy(self.policy, {"trust": {"allowUnsafe": True}})
         self.assertEqual(self.call("validate", plan, "--policy", self.policy)[0], 0)
 
     def test_report_explains_what_each_wave_did_and_spent(self):
@@ -337,7 +346,7 @@ class RunnerTest(Fixtures):
 
 
 class InvocationTest(unittest.TestCase):
-    HELP = "--permission-prompts --disable-slash-commands --disallowedTools --strict-mcp-config --max-budget-usd --add-dir"
+    HELP = "--disable --setting-sources --permission-prompts --disable-slash-commands --disallowedTools --strict-mcp-config --max-budget-usd --add-dir"
     FEATURES = "multi_agent                              stable             true\nmulti_agent_v2                           stable             false\n"
 
     def build(self, provider, mode="write", cost_cap=None, **extra):
@@ -486,7 +495,7 @@ class GuardTest(Fixtures):
         repo = self.make_repo()
         workers = [
             self.worker("big", "write", ["codex", "{result}", "README.md"], "jsonl", repo),
-            self.worker("next", "read-only", ["say", "Later."], "text", repo),
+            self.worker("next", "write", ["say", "Later."], "text", repo),
         ]
         code, result, _, _ = self.run_plan("tokens", workers, maxConcurrent=1, budget={"maxReportedTokens": 1000})
         self.assertEqual(code, 1)
@@ -629,8 +638,8 @@ class GuardTest(Fixtures):
 
     def test_stop_ends_the_running_worker_and_skips_the_queued_one(self):
         workers = [
-            self.worker("slow", "read-only", ["sleep", "60"], "text", self.root),
-            self.worker("next", "read-only", ["say", "Later."], "text", self.root),
+            self.worker("slow", "write", ["sleep", "60"], "text", self.root),
+            self.worker("next", "write", ["say", "Later."], "text", self.root),
         ]
         plan = self.write_plan("slow", {"version": 1, "maxConcurrent": 1, "workers": workers})
         folder = self.root / "orchestration"

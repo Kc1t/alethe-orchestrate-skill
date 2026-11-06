@@ -54,6 +54,7 @@ class ResumeRunTest(unittest.TestCase):
             patcher = mock.patch.object(runner, name, value)
             patcher.start()
             self.addCleanup(patcher.stop)
+        (self.root / "policy.json").write_text(json.dumps({"trust": {"cwdRoots": [str(self.work)]}}), encoding="utf-8")
         out = self.call("new", "resume guard", "--why", "test", "--lead", "claude:opus")
         self.folder = Path(json.loads(out)["folder"])
         self.count = 0

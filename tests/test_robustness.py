@@ -42,6 +42,9 @@ class RobustnessTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="robust-"))
         self.addCleanup(self.cleanup)
+        previous_cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, previous_cwd)
         self.policy = self.root / "policy.json"
         patch = mock.patch.dict(os.environ, {"ALETHE_ORCHESTRATE_HOME": str(self.root / "home")})
         patch.start()
@@ -69,7 +72,7 @@ class RobustnessTest(unittest.TestCase):
 
     def worker(self, **extra):
         return {"id": "one", "provider": "custom", "command": sys.executable,
-                "args": [str(FAKE), "say"], "outputFormat": "text", "mode": "read-only",
+                "args": [str(FAKE), "say"], "outputFormat": "text", "mode": "write",
                 "cwd": str(self.root), "task": "Complete fixture.", **extra}
 
     def plan(self, worker=None, **extra):
@@ -217,7 +220,7 @@ class RobustnessTest(unittest.TestCase):
             original = r.start_process
             def start(args, cwd, stdin, stdout, stderr, env):
                 return original([sys.executable, str(FAKE), "say"], cwd, stdin, stdout, stderr, env)
-            with mock.patch.object(r, "resolve_executable", return_value=sys.executable), mock.patch.object(r, "command_help", return_value="--max-budget-usd" if supported else ""), mock.patch.object(r, "start_process", side_effect=start):
+            with mock.patch.object(r, "resolve_executable", return_value=sys.executable), mock.patch.object(r, "command_help", return_value="--max-budget-usd" if supported else "Usage: claude"), mock.patch.object(r, "start_process", side_effect=start):
                 _, state, _ = self.run_plan(worker, name=str(supported), budget={"maxReportedCostUsd": 1})
             self.assertEqual(state["workers"]["one"]["costCapUsd"], 1 if supported else None)
 
@@ -392,9 +395,10 @@ class RobustnessTest(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows native fallback requires Windows")
     def test_recorded_pid_termination_survives_taskkill_timeout(self):
         child = subprocess.Popen([sys.executable, str(FAKE), "quiet", "120"])
+        identity = r.process_start_time(child.pid)
         try:
             with mock.patch.object(r.subprocess, "run", side_effect=subprocess.TimeoutExpired("taskkill", 30)):
-                r.stop_recorded_pid(child.pid)
+                r.stop_recorded_pid(child.pid, identity)
             child.wait(timeout=10)
         finally:
             if child.poll() is None:
@@ -404,7 +408,7 @@ class RobustnessTest(unittest.TestCase):
     def test_detach_rejects_invalid_plan_without_starting_worker(self):
         plan = self.root / "bad.json"
         plan.write_text("{}", encoding="utf-8")
-        with mock.patch.object(r.subprocess, "Popen") as start:
+        with mock.patch.object(r, "checkout_root", return_value=None), mock.patch.object(r.subprocess, "Popen") as start:
             code, _, _ = self.call("run", plan, "--detach", "--policy", self.policy)
         self.assertEqual(code, 2)
         start.assert_not_called()
@@ -416,11 +420,14 @@ class RobustnessTest(unittest.TestCase):
         dead.wait(timeout=10)
         try:
             run = self.root / "orphan"
-            r.atomic_write_json(run / "state.json", {"status": "running", "runnerPid": dead.pid, "workers": {"one": {"status": "running", "pid": child.pid}}})
+            r.atomic_write_json(run / "state.json", {"status": "running", "runnerPid": dead.pid, "workers": {"one": {"status": "running", "pid": child.pid, "processStartTime": r.process_start_time(child.pid)}}})
             self.assertEqual(r.collect_run(run)["status"], "interrupted")
             self.assertIn("interrupted", self.call("status", run)[1])
             code, out, err = self.call("stop", run)
             self.assertEqual(code, 0, err + out)
+            if r.process_start_time(child.pid) is None:
+                self.assertEqual(json.loads(out)["unverifiedPids"], [child.pid])
+                child.kill()
             child.wait(timeout=10)
             self.assertTrue((run / r.STOP_FILE).exists())
         finally:

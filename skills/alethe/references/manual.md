@@ -4,6 +4,44 @@ Use this path when Python 3.9+ is not installed or the user asked not to depend 
 `scripts/orchestrate.py` would do with your own shell and file tools. The playbooks, tiers, worker
 contract and token discipline in SKILL.md stay the same; only the mechanics change.
 
+## Worker safety and trust
+
+The Python runner's saved user policy (the file `policy show` names and onboarding writes) accepts
+this optional block; omitted fields keep these defaults:
+
+```json
+"trust": {"allowUnsafe": false, "cwdRoots": [], "workerEnv": []}
+```
+
+Only the user, or a lead explicitly asked for that exact change, may edit `trust`. Plans cannot
+grant trust. `trust.allowUnsafe: true` permits a plan's separate `allowUnsafe: true` exception for
+custom command bypass flags. `trust.cwdRoots` lists additional absolute directories workers may
+use; normally `cwd` must resolve within the checkout where `run` was invoked, or the invoking
+directory outside git. `taskFile` must resolve inside the plan directory or orchestration folder,
+including through symlinks. Copy an external brief there rather than granting it through a plan.
+
+Worker environments remove names ending in `_TOKEN`, `_KEY`, `_SECRET`, `_PASSWORD` or
+`_CREDENTIALS` (case-insensitive), except provider auth prefixes: Claude `ANTHROPIC_`/`CLAUDE_CODE_`,
+Codex `OPENAI_`/`CODEX_`, Agy `GEMINI_`/`GOOGLE_`, Kimi `MOONSHOT_`/`KIMI_`; custom has none.
+`trust.workerEnv` explicitly allows additional variable names. Never put secrets in task text.
+`ALETHE_ORCHESTRATE_WORKER=1` is an advisory nesting guard: a worker with shell access can unset it.
+
+Read-only requires Codex, Claude or Agy; Kimi/custom must use write mode in a disposable isolated
+worktree. Agy read-only reviewers need a diff file because plan mode cannot run shell commands.
+Unreadable safety help prevents Claude/Codex launches; readable older help keeps optional-flag
+compatibility. Claude uses only user settings when the CLI supports `--setting-sources`.
+
+Internal git operations disable hooks and fsmonitor and ignore inherited `GIT_CONFIG_*` overrides. Worktree and seed
+destinations must remain in the repository without symlink/junction components. `stop` kills only
+unfinished workers whose recorded OS start time still matches the PID; legacy/unverifiable PIDs
+are reported without being signalled.
+
+With Python, `clean [--older-than DAYS]` previews orchestration folders and temporary runs older
+than 14 days. Add `--yes` to delete only completed ones without open worktrees. It protects every
+session's current folder and unfinished waves; recent file changes also keep a folder. Legacy
+missing-worktree records without a verifiable origin are kept. Arbitrary external run folders
+are not discovered. Without Python, inspect the same conditions before removing a folder yourself.
+
 ## 1. Detect
 
 Run these yourself, in one batch, and keep only the answers:
@@ -188,7 +226,8 @@ needs only what you know; use `null` for anything its CLI did not report:
 | `usage` | read quota sources and show windows, reset times and freshness as above |
 | `models` | show the model and price view above; refresh needed stale or missing entries |
 | `list`, `use <folder>` | list the run folders under the temp folder, newest first; remember the one picked |
-| `stop` | stop the background worker processes of the current folder |
+| `stop` | stop the background worker processes of the current folder, verifying process identity first |
+| `clean` | with Python, preview old completed folders; `--yes` deletes eligible ones; otherwise inspect and remove them manually |
 | `budget <limit>` | write the limit at the top of `state.md` and check it after every wave |
 | `note <text>`, `mark <worker> <mark>` | append it to `state.md`; the report lists notes under "Changes to the plan" |
 | `on`, `off`, `save`, `balanced`, `max`, `freestyle`, `careful` | keep the mode, goal, care level and rules in this conversation; after a compaction, ask the user whether it is still on |
