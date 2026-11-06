@@ -202,6 +202,20 @@ class QuotaGuardTest(unittest.TestCase):
         self.assertEqual(agy["windows"]["argon"]["usedPercent"], 97)
         self.assertEqual(agy["windows"]["3p-5h"]["usedPercent"], 48)
 
+    def test_refresh_agy_survives_a_busy_temp_folder(self):
+        # On Windows the agy process can still hold its temporary working folder when the probe ends.
+        real_rmtree = runner.shutil.rmtree
+
+        def busy(path, *args, **kwargs):
+            if kwargs.get("ignore_errors"):
+                return real_rmtree(path, ignore_errors=True)
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+
+        with mock.patch.object(runner, "resolve_executable", return_value=sys.executable),              mock.patch.object(runner, "launch_command", return_value=[sys.executable, str(FAKE), "agy-usage"]),              mock.patch("shutil.rmtree", side_effect=busy):
+            code, out, err = self.call("usage", "--refresh-agy", "--policy", self.policy)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["providers"]["agy"]["windows"]["5h"]["usedPercent"], 86)
+
 
 if __name__ == "__main__":
     unittest.main()
