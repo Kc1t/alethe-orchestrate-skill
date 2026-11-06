@@ -43,6 +43,29 @@ the next wave's brief. Instead:
 2. Log the plan adjustment with `scripts/orchestrate.py note "<decision added after NEEDS_CONTEXT>" --kind add`.
 3. Launch the next wave referencing the updated state file.
 
+## Answering NEEDS_CONTEXT by resuming the worker
+
+When the missing context is a short answer (a decision, a policy, a path), resume the worker that asked
+instead of launching a new one with a longer brief:
+
+1. Take the `sessionId` from the worker's outcome and check that it is the same provider.
+2. Launch one worker with `resume: "<sessionId>"` and a brief that holds only the answer and "continue
+   where you stopped, without rereading what you already read".
+3. If the resume ends `failed` (including `failureKind: session_not_found`, when the provider could not find
+   the session and started another), or the worker cannot be resumed, launch a new worker with a compact
+   handoff.
+
+Resume does not pay when the answer is long (measured break-even near 20 thousand characters, about 6 thousand
+tokens), because the answer is written to the session cache at the same price a new worker pays for it. A
+resumed worker cannot use `isolate`; a writer that was isolated can be resumed with `cwd` set to its worktree
+and `isolate: false`. Providers report the cost of a resumed worker as a running total of the whole
+conversation; the report subtracts the earlier turns of the same session.
+
+Measured on a synthetic project (Claude Sonnet, low effort, read-only and writing tasks, 2 to 3 runs each):
+the resumed worker's own cost was 28 to 48 percent below a new worker's on small projects and
+a chain of two `NEEDS_CONTEXT`, and 12 percent below on a 180-function writing task where the edits dominate the
+cost. Quality was the same in every pair.
+
 ## Checking a writer's work
 
 - Check the repository, not the worker's report. Its summary and its status are claims.
