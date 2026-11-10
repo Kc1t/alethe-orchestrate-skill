@@ -346,10 +346,11 @@ class RunnerTest(Fixtures):
 
 
 class InvocationTest(unittest.TestCase):
-    HELP = "--disable --setting-sources --permission-prompts --disable-slash-commands --disallowedTools --strict-mcp-config --max-budget-usd --add-dir"
+    HELP = "--disable --setting-sources --permission-prompts --disable-slash-commands --disallowedTools --strict-mcp-config --max-budget-usd --add-dir --tools"
+    HELP_WITHOUT_TOOLS = "--disable --setting-sources --permission-prompts --disable-slash-commands --disallowedTools --strict-mcp-config --max-budget-usd --add-dir"
     FEATURES = "multi_agent                              stable             true\nmulti_agent_v2                           stable             false\n"
 
-    def build(self, provider, mode="write", cost_cap=None, **extra):
+    def build(self, provider, mode="write", cost_cap=None, help_text=None, **extra):
         worker = {
             "id": "w",
             "provider": provider,
@@ -361,7 +362,8 @@ class InvocationTest(unittest.TestCase):
             "task": "Do the unit.\n- second line",
             **extra,
         }
-        outputs = lambda args, cache, lock: self.FEATURES if args[-2:] == ["features", "list"] else self.HELP
+        active_help = self.HELP if help_text is None else help_text
+        outputs = lambda args, cache, lock: self.FEATURES if args[-2:] == ["features", "list"] else active_help
         root = Path(tempfile.mkdtemp(prefix="invocation-test-"))
         self.addCleanup(remove_tree, root)
         with mock.patch.object(orchestrate, "resolve_executable", lambda name: name), mock.patch.object(
@@ -392,6 +394,54 @@ class InvocationTest(unittest.TestCase):
         self.assertIn("--strict-mcp-config", args)
         self.assertEqual(args[args.index("--max-budget-usd") + 1], "0.50")
         self.assertNotIn("--strict-mcp-config", self.build("claude", mcp=True))
+
+    def test_claude_haiku_read_only_avoids_plan_mode_and_restricts_tools(self):
+        args = self.build("claude", mode="read-only", model="haiku")
+        self.assertEqual(args[args.index("--permission-mode") + 1], "dontAsk")
+        self.assertNotIn("plan", args)
+        self.assertEqual(args[args.index("--tools") + 1], "Read,Grep,Glob")
+
+    def test_claude_versioned_haiku_id_is_also_detected(self):
+        args = self.build("claude", mode="read-only", model="claude-haiku-4-5-20251001")
+        self.assertEqual(args[args.index("--permission-mode") + 1], "dontAsk")
+        self.assertEqual(args[args.index("--tools") + 1], "Read,Grep,Glob")
+
+    def test_claude_haiku_write_mode_keeps_accept_edits_and_no_tool_restriction(self):
+        args = self.build("claude", mode="write", model="haiku")
+        self.assertEqual(args[args.index("--permission-mode") + 1], "acceptEdits")
+        self.assertNotIn("--tools", args)
+
+    def test_claude_sonnet_read_only_keeps_plan_mode(self):
+        args = self.build("claude", mode="read-only", model="sonnet")
+        self.assertEqual(args[args.index("--permission-mode") + 1], "plan")
+        self.assertNotIn("--tools", args)
+
+    def test_claude_opus_read_only_keeps_plan_mode(self):
+        args = self.build("claude", mode="read-only", model="opus")
+        self.assertEqual(args[args.index("--permission-mode") + 1], "plan")
+        self.assertNotIn("--tools", args)
+
+    def test_claude_read_only_without_a_pinned_model_keeps_plan_mode(self):
+        args = self.build("claude", mode="read-only")
+        self.assertEqual(args[args.index("--permission-mode") + 1], "plan")
+        self.assertNotIn("--tools", args)
+
+    def test_claude_haiku_read_only_refuses_the_worker_when_tools_is_unsupported(self):
+        with self.assertRaises(orchestrate.PlanError):
+            self.build("claude", mode="read-only", model="haiku", help_text=self.HELP_WITHOUT_TOOLS)
+
+    def test_claude_sonnet_read_only_unaffected_by_missing_tools_support(self):
+        args = self.build("claude", mode="read-only", model="sonnet", help_text=self.HELP_WITHOUT_TOOLS)
+        self.assertEqual(args[args.index("--permission-mode") + 1], "plan")
+
+    def test_claude_opus_read_only_unaffected_by_missing_tools_support(self):
+        args = self.build("claude", mode="read-only", model="opus", help_text=self.HELP_WITHOUT_TOOLS)
+        self.assertEqual(args[args.index("--permission-mode") + 1], "plan")
+
+    def test_claude_haiku_write_mode_unaffected_by_missing_tools_support(self):
+        args = self.build("claude", mode="write", model="haiku", help_text=self.HELP_WITHOUT_TOOLS)
+        self.assertEqual(args[args.index("--permission-mode") + 1], "acceptEdits")
+        self.assertNotIn("--tools", args)
 
     def test_json_output_survives_noise(self):
         self.assertEqual(len(orchestrate.json_values('{"a": 1}\nnot json\n{"b": 2}\n', "jsonl")), 2)

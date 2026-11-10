@@ -141,8 +141,13 @@ class SecurityTest(unittest.TestCase):
         with self.fake_cli(), mock.patch.object(r, "command_help", return_value="Usage: older CLI"), mock.patch.object(
             r, "command_output", return_value=""
         ):
-            for provider in ("claude", "codex"):
-                self.assertTrue(self.invocation(self.worker(provider)))
+            self.assertTrue(self.invocation(self.worker("codex")))
+            # A non-Haiku model still degrades gracefully on a CLI this old.
+            self.assertTrue(self.invocation(self.worker("claude", model="sonnet")))
+            # The implicit cheap tier resolves to Haiku; refusing is the fail-closed behavior,
+            # since this CLI has no --tools to prove the read-only guarantee without Plan Mode.
+            with self.assertRaisesRegex(r.PlanError, "--tools"):
+                self.invocation(self.worker("claude"))
         with self.fake_cli(), mock.patch.object(r, "command_output", return_value=""), mock.patch.object(
             r, "command_help", return_value="--disable"
         ), self.assertRaisesRegex(r.PlanError, "Codex features list"):
