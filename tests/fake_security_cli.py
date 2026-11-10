@@ -6,7 +6,7 @@ provider = sys.argv[1]
 args = sys.argv[2:]
 if "--help" in args:
     print("--disable --disallowedTools --strict-mcp-config --max-budget-usd "
-          "--permission-prompts --setting-sources --disable-slash-commands --add-dir")
+          "--permission-prompts --setting-sources --disable-slash-commands --add-dir --tools")
 elif args == ["features", "list"]:
     print("multi_agent stable true\nmulti_agent_v2 stable false")
 else:

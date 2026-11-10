@@ -208,6 +208,11 @@ SNAPSHOT_LIMIT = 5000
 MAX_LISTED_PATHS = 50
 NESTED_AGENT_FEATURES = ("multi_agent", "multi_agent_v2")
 CLAUDE_AGENT_TOOLS = "Agent,Workflow"
+# Claude Code's Plan Mode silently promotes a Haiku session to Sonnet
+# (https://code.claude.com/docs/en/model-config#opusplan-model-setting), which breaks a
+# pinned Haiku worker's model and cost. dontAsk plus this read-only allowlist keeps the
+# worker read-only without entering Plan Mode, so only Haiku needs the detour.
+CLAUDE_HAIKU_READ_ONLY_TOOLS = "Read,Grep,Glob"
 WORKER_STATUSES = ("DONE", "DONE_WITH_CONCERNS", "BLOCKED", "NEEDS_CONTEXT")
 VERDICTS = ("PASS", "FAIL", "NOT_PROVEN")
 MARKS = ("used", "partial", "discarded")
@@ -2649,7 +2654,9 @@ def build_invocation(
 
     if provider == "claude":
         launch = launch_command(resolve_executable("claude"))
-        permission = "plan" if mode == "read-only" else "acceptEdits"
+        is_haiku = bool(model) and re.fullmatch(r"(?:claude-)?haiku(?:-\d[\d-]*)?", model, re.IGNORECASE) is not None
+        read_only_haiku = mode == "read-only" and is_haiku
+        permission = "dontAsk" if read_only_haiku else "plan" if mode == "read-only" else "acceptEdits"
         args = [
             *launch,
             "--print",
@@ -2662,6 +2669,16 @@ def build_invocation(
         help_text = command_help(launch, help_cache, help_lock)
         if not help_text.strip():
             raise PlanError("cannot read Claude --help for safety flags; repair the CLI/help command before starting a worker")
+        if read_only_haiku:
+            if "--tools" not in help_text:
+                raise PlanError(
+                    "this Claude CLI has no --tools flag, so a read-only Haiku worker cannot be "
+                    "started: Plan Mode would silently promote it to Sonnet "
+                    "(https://code.claude.com/docs/en/model-config#opusplan-model-setting) and no "
+                    "other flag proves the same read-only guarantee; update the CLI or pin a "
+                    "non-Haiku model for this worker"
+                )
+            args += ["--tools", CLAUDE_HAIKU_READ_ONLY_TOOLS]
         if "--setting-sources" in help_text:
             args += ["--setting-sources", "user"]
         if "--permission-prompts" in help_text:
