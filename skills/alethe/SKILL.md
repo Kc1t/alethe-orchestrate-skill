@@ -147,8 +147,14 @@ See [references/playbooks.md](references/playbooks.md) for the optional `passive
 
 Both modes take the same options:
 
-- `--goal save` spends as little as possible, `max` gets the most out of the available agents, and
-  `balanced` (the default) delegates only when the playbook says it pays.
+- `--goal save` spends as little as possible, and `balanced` (the default) delegates only when the
+  playbook says it pays.
+- `--goal max` gets the most out of the available agents and makes delegation the default. Stay
+  direct only for one file, one obvious edit or about 5 tool calls. For anything larger, write one
+  line before the first tool call ("Alethe: 3 units -> agy flash reads, sonnet writes, I integrate")
+  and delegate every bounded unit; keep decisions, design and integration. Start workers through
+  `scripts/orchestrate.py`: the Claude Code Agent tool's limit on spawning covers that tool only.
+  Turning on `max` is still not approval; a standing instruction that says to go ahead is.
 - `--goal freestyle` drops playbooks, plans and waves: you work as usual and only watch over cost.
   Check quota before long or heavy steps. When a cheaper or better route exists, say so in one
   line, at most once per reply and not again once declined: "This rename is mechanical, so I'll
@@ -165,7 +171,7 @@ Turn it on when the user says `/alethe on`, gives a standing instruction, or ask
 words as a rule. Confirm in one line what is now on, then go back to what they were doing.
 
 The Claude Code hook reminds you every prompt in explicit non-passive modes; without it, run `mode show` at session start
-and after compaction. Delegate only where the overhead pays under the goal; keep small work yourself.
+and after compaction. Delegate where the overhead pays under the goal; under `max`, delegation is the default and only trivial work stays with you.
 
 ## Join mid-task
 
@@ -174,7 +180,8 @@ Join at any point, including inside another skill's workflow. Do not start over:
 1. Take what already exists as the plan: the conversation, a spec, a task list, a design doc, the
    diff so far. Point workers at those files instead of copying them.
 2. Keep the other workflow's steps and gates: pending tasks become units and its checks become
-   gates. Rewrite its files only when one of its steps says to.
+   gates. Rewrite its files only when one of its steps says to. Its steps are still units: another
+   skill keeps the order and the gates, not the right to run everything inline.
 3. Use `new` only for delegated work. Keep small, coupled or ambiguous work with the lead; say why
    in one line.
 

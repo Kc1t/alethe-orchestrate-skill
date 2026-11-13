@@ -51,7 +51,7 @@ MODE_GOALS = {
     "passive": "watch the session's own spend and quota, and hand bounded units to cheaper workers, Codex first while its subscription has room, without a playbook",
     "save": "spend as little as possible: keep small work with the lead and send bounded units to the cheapest capable tier",
     "balanced": "delegate only when the playbook says it pays, on the tier each unit needs",
-    "max": "get the most out of the available agents: parallel waves, strong reviewers and best-of-n on hard calls",
+    "max": "get the most out of the available agents: delegate every bounded unit by default, parallel waves, strong reviewers and best-of-n on hard calls",
     "freestyle": "watch over cost and quota and suggest cheaper routes, without orchestrating",
 }
 PASSIVE_DEFAULTS = {"checkEveryMinutes": 15, "spendStepUsd": 5, "prefer": ["codex", "claude"], "askAboveWorkers": 2}
@@ -4589,6 +4589,21 @@ def effective_mode(state: Dict[str, Any], here: Path) -> Tuple[Optional[str], Op
     return None, None
 
 
+def with_everywhere_rules(
+    state: Dict[str, Any], scope: Optional[str], mode: Optional[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    if mode is None or scope in (None, "default") or not state.get("everywhere"):
+        return mode
+    global_rules = state["everywhere"].get("rules") or []
+    if not global_rules:
+        return mode
+    merged = list(mode.get("rules") or [])
+    for rule in global_rules:
+        if rule not in merged and len(merged) < MAX_MODE_RULES:
+            merged.append(rule)
+    return {**mode, "rules": merged}
+
+
 def updated_mode(
     mode: Optional[Dict[str, Any]], goal: Optional[str], care: Optional[str], rules: Sequence[str], clear_rules: bool
 ) -> Dict[str, Any]:
@@ -4634,6 +4649,7 @@ def mode_payload(
     scope = str(mode_scope(cwd))
     if action == "show":
         found, mode = effective_mode(state, Path(scope))
+        mode = with_everywhere_rules(state, found, mode)
         source = "off" if mode is None else "default" if found == "default" else "project" if found else "everywhere"
         reason = source
         if mode is None:
@@ -4667,6 +4683,19 @@ def mode_reminder(mode: Dict[str, Any], everywhere: bool) -> str:
     rules = [rule for rule in mode.get("rules") or [] if isinstance(rule, str)]
     if rules:
         parts.append("User rules: " + "; ".join(rules) + ".")
+    if goal == "max":
+        parts.append(
+            f"Commands: {runner_command()} <command>. "
+            "Under max, delegation is the default. Before your first tool call on each request, write one line: "
+            "'Alethe: N units -> who does each'. Stay direct only for one file, one obvious edit or about 5 tool calls. "
+            "For anything larger, delegate every bounded unit (reading, research, batch edits with a check, tests, audits) "
+            "through new, run --detach and wait, and keep only decisions, design and integration. "
+            "Another skill or spec keeps its steps and gates, but those steps are still units, as in the skill's Join mid-task section. "
+            "The Agent tool's limit on spawning covers that tool only; these are CLI workers. "
+            "A user rule that says to go ahead is the approval the skill asks for. "
+            "'/alethe off' turns this off here."
+        )
+        return " ".join(parts)
     if goal == "freestyle":
         parts.append(MODE_FREESTYLE + " '/alethe off' turns this off here.")
         return " ".join(parts)
@@ -4678,11 +4707,23 @@ def mode_reminder(mode: Dict[str, Any], everywhere: bool) -> str:
     return " ".join(parts)
 
 
+def runner_command() -> str:
+    """How the lead should call this runner: the interpreter running the hook, isolated (-I).
+
+    A bare python3 is missing on many Windows installs (or is the Store stub); sys.executable is the
+    interpreter that already works here, and -I keeps the current folder and PYTHON* variables out.
+    """
+    interpreter = sys.executable or "python3"
+    quoted = f'"{interpreter}"' if " " in interpreter or os.name == "nt" else interpreter
+    return f'{quoted} -I "{Path(__file__).resolve()}"'
+
+
 def hook_stdin() -> str:
     stream = getattr(sys.stdin, "buffer", None)
     if stream is None:
-        return sys.stdin.read()
-    return stream.read().decode("utf-8", errors="replace")
+        return sys.stdin.read().lstrip("﻿")
+    # Windows shells may prefix stdin with a UTF-8 BOM, which json.loads rejects.
+    return stream.read().decode("utf-8-sig", errors="replace")
 
 
 def hook_output(stdin_text: str) -> str:
@@ -4704,6 +4745,7 @@ def hook_output(stdin_text: str) -> str:
             save_mode_state(state)
         if mode.get("goal") == "passive":
             return passive_hook(event, cwd, mode, now)
+        mode = with_everywhere_rules(state, scope, mode)
         return mode_reminder(mode, scope is None) + "\n" if event_name == "UserPromptSubmit" else ""
     except Exception:  # A hook must never block the user's prompt.
         return ""
@@ -4817,7 +4859,7 @@ def passive_spend_line(payload: Dict[str, Any], quota_text: str) -> str:
 
 def passive_brief(settings: Dict[str, Any]) -> str:
     return (
-        f"Use the alethe skill; commands: python3 \"{Path(__file__).resolve()}\" <command>. "
+        f"Use the alethe skill; commands: {runner_command()} <command>. "
         "Alethe passive: work normally, without a playbook/plan/waves unless asked. Autonomously delegate cheaper "
         "bounded scouting, checked edits, tests or finished-diff reviews; keep small/ambiguous/design/coupled "
         "work and integration. Honor billing/passive.prefer: Codex first with fresh 5h/week below "

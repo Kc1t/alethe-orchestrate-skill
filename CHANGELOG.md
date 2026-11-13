@@ -3,6 +3,23 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## Unreleased
+
+Changed:
+
+- `goal max` makes delegation the default: the lead stays direct only for one file, one obvious
+  edit or about 5 tool calls, writes one "Alethe: N units -> who does each" line, and delegates
+  every other bounded unit. The `direct` playbook and `pickOrder` use the same threshold.
+- Project modes inherit the `everywhere` rules (up to the 8-rule limit) in the hook and in
+  `mode show`, without copying them into `modes.json`; expired `everywhere` modes still drop out.
+- Hook reminders print the interpreter that runs the hook, isolated (`"<sys.executable>" -I`),
+  instead of a bare `python3`, which is missing or a Store stub on many Windows installs.
+
+Fixed:
+
+- The hook accepted no input that started with a UTF-8 BOM, as some Windows shells send it:
+  `hook.py` and `orchestrate.py hook` silently printed nothing. Both now strip the BOM.
+
 ## 24 (2026-11-04)
 
 Fixed:

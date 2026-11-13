@@ -222,6 +222,21 @@ class PassiveTest(unittest.TestCase):
             full.assert_called_once()
         self.assertEqual(json.loads(expected)["hookSpecificOutput"]["hookEventName"], "PostToolUse")
 
+    def test_hook_entry_accepts_a_utf8_bom_on_stdin(self):
+        payload = json.dumps({"cwd": str(self.project), "session_id": "bom", "transcript_path": str(self.transcript),
+                              "hook_event_name": "UserPromptSubmit"})
+        with mock.patch.object(h.time, "time", return_value=self.now), mock.patch.object(
+            h, "full_hook_output", side_effect=lambda text: r.hook_output(text)
+        ) as full:
+            self.assertNotEqual(h.hook_output("﻿" + payload), "")
+            self.assertTrue(full.call_args.args[0].startswith("{"))
+        stream = io.TextIOWrapper(io.BytesIO(b"\xef\xbb\xbf" + payload.encode("utf-8")), encoding="utf-8")
+        with mock.patch.object(r.sys, "stdin", stream):
+            self.assertEqual(json.loads(r.hook_stdin())["session_id"], "bom")
+        with mock.patch.object(r.sys, "stdin", io.StringIO("﻿" + payload)):
+            self.assertEqual(json.loads(r.hook_stdin())["session_id"], "bom")
+        self.assertIn(r.runner_command(), r.passive_brief(r.PASSIVE_DEFAULTS))
+
     def test_hook_entry_prompts_still_check_spend_immediately(self):
         self.hook()
         self.append(self.response(input_tokens=2000000))

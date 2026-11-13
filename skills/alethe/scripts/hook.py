@@ -105,6 +105,8 @@ def hook_output(stdin_text: str) -> str:
     if os.environ.get("ALETHE_ORCHESTRATE_WORKER") == "1":
         return ""
     try:
+        # Windows shells may prefix stdin with a UTF-8 BOM, which json.loads rejects.
+        stdin_text = stdin_text.lstrip("﻿")
         event = json.loads(stdin_text) if stdin_text.strip() else {}
         if not isinstance(event, dict) or skip_hook(event, time.time()):
             return ""
