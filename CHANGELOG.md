@@ -3,6 +3,33 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## Unreleased
+
+Added:
+
+- Guidance for answering `STATUS: NEEDS_CONTEXT` by resuming the worker's session with a short brief instead
+  of launching a new worker (`references/briefs.md`), and how providers behave when a session cannot be
+  resumed (`references/providers.md`). On a synthetic project the resumed worker's own cost was 12 to 48
+  percent below a new worker's with the same quality; the gain is gone for answers of about 20 thousand
+  characters or more.
+- `report` shows a resumed worker as the increment over the earlier turns of the same session. Claude's
+  `total_cost_usd` and Agy's token usage are running totals for the whole conversation, so summing them per
+  worker counted the earlier turns again (+82 percent on the measured case). The value as reported stays in
+  `costUsdReported` / `tokensReported`; when the earlier total is not in the report the worker is marked
+  `incremental: "unconfirmed"` and nothing is estimated. New `totals.resumedIncremental` and
+  `totals.resumedUnconfirmed`. `plan.json` now records `resume`.
+
+Fixed:
+
+- A resume whose session the provider could not find no longer passes as success. Agy answers an unknown
+  session id by starting a new session with another id and can end `DONE` from the short resume brief alone.
+  The runner now compares the returned `sessionId` with the one sent (Claude and Agy keep it on a real resume)
+  and fails the worker with `failureKind: session_not_found` and no handoff status. Its spend is still reported.
+- `maxReportedCostUsd` and `maxReportedTokens` count only what a resumed worker added. They summed the running
+  totals the providers report for the whole conversation, so a resumed worker was charged for the earlier turns
+  again. The earlier total is read from the same orchestration folder; when it is not there the reported value is
+  kept (never lower) and `resumeIncrement` in `outcome.json` is `unconfirmed`. Other providers are not adjusted.
+
 ## 24 (2026-11-04)
 
 Fixed:

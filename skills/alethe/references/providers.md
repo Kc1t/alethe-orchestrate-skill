@@ -90,6 +90,23 @@ out or went quiet still leaves its session id for runner strategy `rescue`.
 Resume only a closely related follow-up. If no session ID was emitted, create a new worker with a
 compact handoff instead.
 
+How providers behave when a session cannot be resumed (measured 2026-11-04):
+
+- Claude: an unknown session id fails in about 2 seconds with a failed worker and no cost.
+- Agy: an unknown session id is not an error for the CLI. It starts a new session with a different id and
+  does the task with only the resume brief. The runner compares the returned `sessionId` with the one sent
+  (Claude and Agy keep it on a real resume) and fails the worker with `failureKind: session_not_found` and
+  no handoff status, so it never ends as `DONE`. Its spend is still reported.
+- `resume` cannot be combined with `isolate`. To continue an isolated writer, set `cwd` to its worktree
+  and `isolate: false`; the worktree survives `NEEDS_CONTEXT`. A removed worktree is refused before the
+  worker starts (`cwd is not a directory`).
+
+Claude's `total_cost_usd` and Agy's token usage of a resumed worker are running totals for the whole
+conversation, so `report` shows the increment over the earlier turns of the same session and the
+budgets (`maxReportedCostUsd`, `maxReportedTokens`) count only what the resumed worker added. When the earlier
+turns are not in the report, the worker is marked `incremental: "unconfirmed"`. Claude token counts and the
+cost of other providers are not adjusted.
+
 ## Custom CLIs
 
 Use `provider: "custom"` with:
