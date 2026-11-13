@@ -7,7 +7,7 @@ version: 1
 goal: orchestrate-and-save
 
 principles:
-  - Do the work yourself when briefing a worker would cost more; delegation always has a floor cost.
+  - Delegate every bounded unit by default; do it yourself only for one file, one obvious edit or about 5 tool calls, or for decisions, design and integration.
   - Spend the strong tier on decisions and the cheap tier on volume.
   - Pin every worker's model and effort; a worker without them runs on its CLI's default model, which can be the most expensive one.
   - Keep your context small; workers return answers, evidence and diffs, never transcripts.
@@ -82,7 +82,7 @@ profiles:
         codex: { effort: high }
 
 pickOrder:
-  - { when: "Narrow, clear task touching up to about 3 files", playbook: direct }
+  - { when: "Trivial task, one file, one obvious edit, about 5 tool calls at most", playbook: direct }
   - { when: "Mechanical change with an automatic check", playbook: cascade }
   - { when: "Unfamiliar code with much to read and little to write", playbook: scout-then-build }
   - { when: "Up to about 10 independent questions or reads", playbook: plan-big-execute-small }
@@ -114,7 +114,7 @@ playbooks:
         tier: strong
         if: narrow
         then: done
-        does: A narrow task never leaves your session; make the change and run the checks.
+        does: Narrow means one file and one obvious edit, about 5 tool calls at most; anything larger goes to read or build. Make the change and run the checks.
       - id: read
         role: scout
         tier: cheap
@@ -170,7 +170,7 @@ playbooks:
   direct:
     name: Direct
     goal: Finish it yourself without orchestration overhead.
-    pickWhen: The task is narrow and clear, up to about 3 files.
+    pickWhen: Trivial task, one file, one obvious edit, about 5 tool calls at most.
     saves: No briefing and no second reader of the same files.
     avoidWhen: There is real independent work to split.
     phases:

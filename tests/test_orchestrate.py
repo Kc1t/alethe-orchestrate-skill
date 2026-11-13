@@ -591,7 +591,7 @@ class GuardTest(Fixtures):
         repo = self.make_repo()
         other = self.root / "elsewhere"
         other.mkdir()
-        self.assertEqual(self.call("mode", "on", "--everywhere", "--goal", "save")[0], 0)
+        self.assertEqual(self.call("mode", "on", "--everywhere", "--goal", "save", "--rule", "regra global")[0], 0)
         self.assertIn("on in every project", self.hook(other))
         self.assertIn("Goal: save", self.hook(repo))
         with mock.patch.object(orchestrate.time, "time", return_value=time.time() + 10 * orchestrate.MODE_IDLE_SECONDS):
@@ -602,10 +602,16 @@ class GuardTest(Fixtures):
         self.assertIn("on in every project", self.hook(other))
         self.assertEqual(json.loads(self.call("mode", "show", "--cwd", other)[1])["source"], "everywhere")
 
-        self.call("mode", "on", "--cwd", repo, "--care", "careful")
+        self.call("mode", "on", "--cwd", repo, "--goal", "max", "--care", "careful", "--rule", "regra local")
         reminder = self.hook(repo)
         self.assertIn("on for this project", reminder)
         self.assertIn("Careful:", reminder)
+        self.assertIn("Under max, delegation is the default", reminder)
+        self.assertIn(orchestrate.runner_command(), reminder)
+        self.assertIn(" -I ", orchestrate.runner_command())
+        self.assertIn(sys.executable, orchestrate.runner_command())
+        self.assertIn("User rules: regra local; regra global.", reminder)
+        self.assertEqual(json.loads(self.call("mode", "show", "--cwd", repo)[1])["rules"], ["regra local", "regra global"])
 
         self.assertEqual(self.call("mode", "off", "--everywhere")[0], 0)
         self.assertEqual(self.hook(other), "")
