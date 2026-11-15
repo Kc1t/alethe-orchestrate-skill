@@ -646,6 +646,16 @@ class PassiveTest(unittest.TestCase):
         self.assertIn("5h unknown", self.hook())
         self.assertEqual(self.hook(), "")
 
+    def test_codex_monthly_only_reading_has_room_to_spare(self):
+        now = dt.datetime.fromtimestamp(self.now, dt.timezone.utc)
+        r.save_usage(self.policy, {"provider": "codex", "observedAt": now.isoformat(), "source": "fixture",
+            "windows": {"month": {"usedPercent": 2, "resetsAt": (now + dt.timedelta(days=20)).isoformat()}}})
+        usage = r.usage_payload(self.policy, refresh=False, now=now)
+        text = r.passive_quota_text(usage, r.load_prices(self.policy), dict(r.PASSIVE_DEFAULTS))
+        self.assertRegex(text, r"Codex month 2% \(resets \w{3} \w{3} \d\d \d\d:\d\d\): room to spare, hand it bounded units\.")
+        self.assertNotIn("Codex 5h unknown", text)
+        self.assertIn("Claude 5h unknown, week unknown", text)
+
     def test_new_low_saved_provider_is_reported_without_codex_scan(self):
         self.hook()
         self.save_quota(provider="claude", percent=90)

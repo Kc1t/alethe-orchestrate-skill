@@ -66,7 +66,9 @@ this inventory instead of `doctor`, and save the approved copy at the path above
 
 Before every wave, read Claude quota from the latest `rate_limit_event` left by each Claude
 worker. Read Codex quota from the latest quota data in its own session files under its home
-directory; do not start a worker to get it or expect it in the worker's stdout. Claude is only as
+directory, walking back from the newest `rollout-*.jsonl` past files without `rate_limits` (Codex
+Desktop leaves some); do not start a worker to get it or expect it in the worker's stdout. Map
+`window_minutes` 300, 10080 and 43200 to `5h`, `week` and `month`; ChatGPT Go reports only `month`. Claude is only as
 fresh as its last worker event; Codex is freshly read. Keep each provider/window's `usedPercent`,
 `resetsAt`, `ageMinutes`, `low` (>= active `quota.criticalThreshold`), `blocked`
 (>= `quota.stopAt`), `stale` (>30 minutes) and `reset` in `alethe-usage.json` next to the policy.

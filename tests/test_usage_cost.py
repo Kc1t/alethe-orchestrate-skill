@@ -103,6 +103,35 @@ class UsageCostTest(unittest.TestCase):
         self.assertEqual(quota["source"], str(mine))
         self.assertEqual(runner.codex_quota()["windows"]["5h"]["usedPercent"], 99)
 
+    def test_codex_go_plan_monthly_window_is_a_known_main_window(self):
+        path = self.rollout()
+        event = {"timestamp": self.now.isoformat(), "type": "event_msg", "payload": {
+            "type": "token_count", "rate_limits": {"limit_id": "codex", "primary": {
+                "used_percent": 2.0, "window_minutes": 43200,
+                "resets_at": (self.now + dt.timedelta(days=20)).timestamp()},
+                "secondary": None, "credits": {"has_credits": False}, "plan_type": "go"}}}
+        path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+        quota = runner.codex_quota()
+        self.assertEqual(set(quota["windows"]), {"month"})
+        self.assertEqual(quota["windows"]["month"]["usedPercent"], 2)
+        codex = runner.usage_payload(self.policy, now=self.now)["providers"]["codex"]
+        self.assertFalse(codex["missing"] or codex["stale"] or codex["low"] or codex["blocked"])
+        live = runner.editor_usage({"providers": {"codex": codex}}, ["codex"], now=self.now)["codex"]
+        self.assertEqual((live["month"], live["short"], live["reset"]), (2, 0, 480))
+        self.assertEqual(runner.worker_windows({"provider": "codex", "model": "gpt-5"})[-1], "month")
+
+    def test_codex_reader_skips_newer_rollouts_without_limits(self):
+        older = self.rollout("older", 41)
+        os.utime(older, (self.now.timestamp(), self.now.timestamp()))
+        newest = older.with_name("rollout-2026-10-22-desktop.jsonl")
+        newest.write_text(json.dumps({"type": "session_meta", "payload": {"id": "desktop"}}) + "\n", encoding="utf-8")
+        os.utime(newest, (self.now.timestamp() + 10, self.now.timestamp() + 10))
+        quota = runner.codex_quota()
+        self.assertEqual(quota["source"], str(older))
+        self.assertEqual(quota["windows"]["5h"]["usedPercent"], 41)
+        with mock.patch.object(runner, "CODEX_ROLLOUT_SCAN", 1):
+            self.assertIsNone(runner.codex_quota())
+
     def test_absent_or_invalid_codex_files_do_not_invent_usage(self):
         self.assertIsNone(runner.codex_quota())
         path = self.rollout()

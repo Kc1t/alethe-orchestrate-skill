@@ -104,8 +104,8 @@ Eligible units are read-only scouting or search across many files, mechanical ed
 automatic check, writing or running tests, or an independent review of a finished diff. Keep
 small steps, ambiguous or design work, tightly coupled edits and integration with the lead. The playbook workflow below applies when explicitly requested.
 
-Prefer Codex while both its 5h and week windows are known, fresh and below
-`quota.criticalThreshold`: its subscription quota left at reset is lost. Honor `billing` in
+Prefer Codex while every main window it reports (5h and week, or only month on ChatGPT Go) is
+known, fresh and below `quota.criticalThreshold`: its subscription quota left at reset is lost. Honor `billing` in
 `alethe-prices.json` and `passive.prefer`; compare API prices and ask before using that provider,
 even if its rate-limit windows have room. Run each bounded Codex unit as a one-worker `economy`
 wave through `new`, `run --detach`, and `wait`, pinning model and effort. When Codex is low or the unit needs
