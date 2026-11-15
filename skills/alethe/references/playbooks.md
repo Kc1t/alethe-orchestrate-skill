@@ -166,7 +166,7 @@ both `validate` and `dry-run` warn even when an effort is set.
 | Provider | Main windows | Cycle used for spare quota |
 |---|---|---|
 | `claude` | `5h`, `week` (plus `opus`) | week |
-| `codex` | `5h`, `week` | week |
+| `codex` | `5h`, `week`; `month` alone on ChatGPT Go | week, or month on Go |
 | `agy` | `gemini`, `claude` (plus `gpt`) | none |
 | `kimi` | `5h`, `week` (plus `month`) | week |
 | `kiro` | `credits` | monthly credits |

@@ -981,11 +981,13 @@ CLAUDE_PROBE_SECONDS = 120
 CLAUDE_PROBE_PROMPT = "Reply with OK."
 AGY_PROBE_SECONDS = 90
 CODEX_TAIL_BYTES = 256 * 1024
+CODEX_ROLLOUT_SCAN = 20
 TOKENS_PER_MILLION = 1000000
-MAIN_QUOTA_WINDOWS = ("5h", "week")
+# A provider has the ones its plan reports: ChatGPT Go gives Codex only a 30-day window.
+MAIN_QUOTA_WINDOWS = ("5h", "week", "month")
 QUOTA_PROVIDERS = ("claude", "codex", "agy")
 CLAUDE_QUOTA_WINDOWS = {"five_hour": "5h", "seven_day": "week", "seven_day_opus": "opus", "opus": "opus"}
-CODEX_QUOTA_WINDOWS = {300: "5h", 10080: "week"}
+CODEX_QUOTA_WINDOWS = {300: "5h", 10080: "week", 43200: "month"}
 AGY_QUOTA_WINDOWS = {
     "gemini-5h": "5h",
     "gemini-weekly": "week",
@@ -1101,13 +1103,30 @@ def codex_home() -> Path:
 
 
 def codex_quota(thread_id: Optional[str] = None, path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    if path is not None:
+        return codex_file_quota(path)
     try:
-        if path is None:
-            paths = list((codex_home() / "sessions").glob("*/*/*/rollout-*.jsonl"))
-            if not paths:
-                return None
-            preferred = [path for path in paths if thread_id and thread_id in path.name]
-            path = max(preferred or paths, key=lambda item: item.stat().st_mtime)
+        paths = list((codex_home() / "sessions").glob("*/*/*/rollout-*.jsonl"))
+    except OSError:
+        return None
+
+    def modified(item: Path) -> float:
+        try:
+            return item.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    # Codex Desktop leaves rollouts that hold only session_meta, so walk back to the newest reading.
+    ranked = sorted(paths, key=lambda item: (bool(thread_id) and thread_id in item.name, modified(item)), reverse=True)
+    for candidate in ranked[:CODEX_ROLLOUT_SCAN]:
+        quota = codex_file_quota(candidate)
+        if quota:
+            return quota
+    return None
+
+
+def codex_file_quota(path: Path) -> Optional[Dict[str, Any]]:
+    try:
         stat = path.stat()
         with path.open("rb") as handle:
             offset = max(0, stat.st_size - CODEX_TAIL_BYTES)
@@ -1250,7 +1269,7 @@ EDITOR_USAGE_SLOT = '<script type="application/json" id="live-usage">{}</script>
 EDITOR_PRICES_SLOT = '<script type="application/json" id="model-prices">{}</script>'
 EDITOR_WINDOWS = {
     "claude": {"5h": "short", "week": "week", "opus": "opus"},
-    "codex": {"5h": "short", "week": "week"},
+    "codex": {"5h": "short", "week": "week", "month": "month"},
     "agy": {"5h": "short", "week": "week", "argon": "argon"},
 }
 
@@ -1264,8 +1283,8 @@ def editor_usage(usage: Dict[str, Any], providers: Sequence[str], now: Optional[
             continue
         windows = reading["windows"]
         entry: Dict[str, Any] = {key: round(windows[name]["usedPercent"]) if name in windows else 0 for name, key in keys.items()}
-        week = windows.get("week")
-        reset = timestamp(week["resetsAt"]) if week and not week["reset"] else None
+        cycle = windows.get("week") or windows.get("month")
+        reset = timestamp(cycle["resetsAt"]) if cycle and not cycle["reset"] else None
         entry["reset"] = max(1, math.ceil((reset - current).total_seconds() / 3600)) if reset else None
         entry["expires"] = None
         live[provider] = entry
@@ -4779,7 +4798,8 @@ def passive_quota_text(usage: Dict[str, Any], prices: Dict[str, Any], settings: 
         windows = usage["providers"][provider]["windows"]
         labels = []
         available = []
-        for name in MAIN_QUOTA_WINDOWS:
+        # Without a reading, name the usual 5h and week windows as unknown.
+        for name in [name for name in MAIN_QUOTA_WINDOWS if name in windows] or MAIN_QUOTA_WINDOWS[:2]:
             window = windows.get(name)
             known = window is not None and not window["stale"] and not window["reset"]
             label = f"{name} {window['usedPercent']:g}%" if known else f"{name} unknown"
@@ -4820,7 +4840,7 @@ def passive_brief(settings: Dict[str, Any]) -> str:
         f"Use the alethe skill; commands: python3 \"{Path(__file__).resolve()}\" <command>. "
         "Alethe passive: work normally, without a playbook/plan/waves unless asked. Autonomously delegate cheaper "
         "bounded scouting, checked edits, tests or finished-diff reviews; keep small/ambiguous/design/coupled "
-        "work and integration. Honor billing/passive.prefer: Codex first with fresh 5h/week below "
+        "work and integration. Honor billing/passive.prefer: Codex first with fresh 5h/week (or month) below "
         "quota.criticalThreshold; unused subscription quota expires. Use one-worker economy via "
         "new/run --detach/wait; pin model/effort. If low/context-bound, use cheaper Agent haiku/sonnet. "
         "Announce delegation in one line. Auto-delegate only to fresh-room subscription workers (default billing); "

@@ -3,6 +3,16 @@
 The version is the integer in `skills/alethe/SKILL.md` under `metadata.version`.
 Alethe installs and updates the skill by that number.
 
+## Unreleased
+
+Fixed:
+
+- Codex quota on ChatGPT Go: its only window, 30 days (`window_minutes: 43200`), is read as `month`
+  and counts as a main window, so `usage`, passive mode, quota guards and the editor treat it as a
+  known reading instead of `missing`.
+- Codex quota skips newer session files that hold no `rate_limits` (Codex Desktop leaves files with
+  only `session_meta`) and reads the newest of the 20 latest rollouts that has a reading.
+
 ## 24 (2026-11-04)
 
 Fixed:
